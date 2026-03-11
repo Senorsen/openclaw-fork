@@ -835,6 +835,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "session.writeLock.maxHoldMs": "Session Write Lock Max Hold",
   "session.agentToAgent": "Session Agent-to-Agent",
   "session.agentToAgent.maxPingPongTurns": "Agent-to-Agent Ping-Pong Turns",
+  "session.injectOutboundToTargetSession": "Inject Outbound to Target Session",
   "session.threadBindings": "Session Thread Bindings",
   "session.threadBindings.enabled": "Thread Binding Enabled",
   "session.threadBindings.idleHours": "Thread Binding Idle Timeout (hours)",
