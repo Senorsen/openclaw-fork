@@ -36,7 +36,6 @@ export const DEFAULT_TOOL_ALLOW = [
 export const DEFAULT_TOOL_DENY = [
   "browser",
   "canvas",
-  "nodes",
   "cron",
   "gateway",
   ...CHANNEL_IDS,
