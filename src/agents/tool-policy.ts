@@ -32,7 +32,7 @@ const OWNER_ONLY_TOOL_NAME_FALLBACKS = new Set<string>([
   "whatsapp_login",
   "cron",
   "gateway",
-  "nodes",
+  // nodes: removed from owner-only fallback to allow subagent access (patch)
 ]);
 
 export function isOwnerOnlyToolName(name: string) {
