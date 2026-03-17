@@ -29,7 +29,7 @@ function wrapOwnerOnlyToolExecution(tool: AnyAgentTool, authorized: boolean): An
 const OWNER_ONLY_TOOL_APPROVAL_CLASS_FALLBACKS = new Map<string, OwnerOnlyToolApprovalClass>([
   ["cron", "control_plane"],
   ["gateway", "control_plane"],
-  ["nodes", "exec_capable"],
+  // nodes: removed from owner-only fallback to allow subagent access (patch)
 ]);
 
 export function resolveOwnerOnlyToolApprovalClass(
