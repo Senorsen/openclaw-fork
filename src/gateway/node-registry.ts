@@ -469,7 +469,7 @@ export class NodeRegistry {
         ...systemRunEvent,
       });
     }
-    const timeoutMs = resolveTimerTimeoutMs(params.timeoutMs, 30_000, 0);
+    const timeoutMs = resolveTimerTimeoutMs(params.timeoutMs, 60_000, 0);
     return await new Promise<NodeInvokeResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingInvokes.delete(requestId);
