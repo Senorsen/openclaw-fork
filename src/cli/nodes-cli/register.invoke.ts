@@ -356,7 +356,7 @@ export function registerNodesInvokeCommands(nodes: Command) {
       .option("--security <mode>", "Exec security mode (deny|allowlist|full)")
       .option("--command-timeout <ms>", "Command timeout (ms)")
       .option("--needs-screen-recording", "Require screen recording permission")
-      .option("--invoke-timeout <ms>", "Node invoke timeout in ms (default 30000)", "30000")
+      .option("--invoke-timeout <ms>", "Node invoke timeout in ms (default 60000)", "60000")
       .argument("[command...]", "Command and args")
       .action(async (command: string[], opts: NodesRunOpts) => {
         await runNodesCommand("run", async () => {
