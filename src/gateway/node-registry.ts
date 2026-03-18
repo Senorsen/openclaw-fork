@@ -437,7 +437,7 @@ export class NodeRegistry {
         ...systemRunEvent,
       });
     }
-    const timeoutMs = typeof params.timeoutMs === "number" ? params.timeoutMs : 30_000;
+    const timeoutMs = typeof params.timeoutMs === "number" ? params.timeoutMs : 60_000;
     return await new Promise<NodeInvokeResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingInvokes.delete(requestId);
