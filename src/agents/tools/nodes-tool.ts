@@ -175,7 +175,7 @@ export function createNodesTool(options?: {
   return {
     label: "Nodes",
     name: "nodes",
-    ownerOnly: true,
+    // ownerOnly removed to allow subagent access (patch)
     description:
       "Discover and control paired nodes (status/describe/pairing/notify/camera/photos/screen/location/notifications/run/invoke).",
     parameters: NodesToolSchema,
