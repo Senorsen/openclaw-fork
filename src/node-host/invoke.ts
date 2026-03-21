@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { GatewayClient } from "../gateway/client.js";
 import {
@@ -509,6 +510,144 @@ export async function handleInvoke(
       });
     } catch (err) {
       await sendInvalidRequestResult(client, frame, err);
+    }
+    return;
+  }
+
+  // ── File operations ────────────────────────────────────────────────
+  if (command === "file.read") {
+    try {
+      const params = decodeParams<{
+        path: string;
+        offset?: number;
+        limit?: number;
+      }>(frame.paramsJSON);
+      if (!params.path || typeof params.path !== "string") {
+        throw new Error("INVALID_REQUEST: path required");
+      }
+      const resolved = path.resolve(params.path);
+      const stat = await fsPromises.stat(resolved);
+      if (!stat.isFile()) {
+        throw new Error(`INVALID_REQUEST: not a regular file: ${resolved}`);
+      }
+      const raw = await fsPromises.readFile(resolved);
+      // Detect binary: check for null bytes in first 8KB
+      const probe = raw.subarray(0, 8192);
+      const isBinary = probe.includes(0);
+      if (isBinary) {
+        await sendJsonPayloadResult(client, frame, {
+          content: raw.toString("base64"),
+          encoding: "base64",
+          size: raw.length,
+        });
+      } else {
+        let text = raw.toString("utf-8");
+        const lines = text.split("\n");
+        const totalLines = lines.length;
+        const offset = typeof params.offset === "number" && params.offset > 0 ? params.offset : 1;
+        const limit = typeof params.limit === "number" && params.limit > 0 ? params.limit : undefined;
+        const startIdx = offset - 1; // 1-indexed to 0-indexed
+        const sliced = limit ? lines.slice(startIdx, startIdx + limit) : lines.slice(startIdx);
+        text = sliced.join("\n");
+        await sendJsonPayloadResult(client, frame, {
+          content: text,
+          encoding: "utf8",
+          size: raw.length,
+          totalLines,
+        });
+      }
+    } catch (err) {
+      const message = String(err);
+      const code = message.includes("ENOENT")
+        ? "NOT_FOUND"
+        : message.includes("EACCES")
+          ? "PERMISSION_DENIED"
+          : "INVALID_REQUEST";
+      await sendErrorResult(client, frame, code, message);
+    }
+    return;
+  }
+
+  if (command === "file.write") {
+    try {
+      const params = decodeParams<{
+        path: string;
+        content: string;
+        encoding?: "utf8" | "base64";
+        mkdir?: boolean;
+      }>(frame.paramsJSON);
+      if (!params.path || typeof params.path !== "string") {
+        throw new Error("INVALID_REQUEST: path required");
+      }
+      if (typeof params.content !== "string") {
+        throw new Error("INVALID_REQUEST: content required");
+      }
+      const resolved = path.resolve(params.path);
+      if (params.mkdir !== false) {
+        await fsPromises.mkdir(path.dirname(resolved), { recursive: true });
+      }
+      const encoding = params.encoding === "base64" ? "base64" : "utf8";
+      const buffer = Buffer.from(params.content, encoding);
+      await fsPromises.writeFile(resolved, buffer);
+      await sendJsonPayloadResult(client, frame, { ok: true });
+    } catch (err) {
+      const message = String(err);
+      const code = message.includes("EACCES") ? "PERMISSION_DENIED" : "INVALID_REQUEST";
+      await sendErrorResult(client, frame, code, message);
+    }
+    return;
+  }
+
+  if (command === "file.edit") {
+    try {
+      const params = decodeParams<{
+        path: string;
+        oldText: string;
+        newText: string;
+      }>(frame.paramsJSON);
+      if (!params.path || typeof params.path !== "string") {
+        throw new Error("INVALID_REQUEST: path required");
+      }
+      if (typeof params.oldText !== "string") {
+        throw new Error("INVALID_REQUEST: oldText required");
+      }
+      if (typeof params.newText !== "string") {
+        throw new Error("INVALID_REQUEST: newText required");
+      }
+      const resolved = path.resolve(params.path);
+      const raw = await fsPromises.readFile(resolved, "utf-8");
+      const idx = raw.indexOf(params.oldText);
+      if (idx === -1) {
+        await sendErrorResult(
+          client,
+          frame,
+          "NOT_FOUND",
+          "oldText not found in file",
+        );
+        return;
+      }
+      // Check for multiple occurrences
+      const secondIdx = raw.indexOf(params.oldText, idx + 1);
+      if (secondIdx !== -1) {
+        await sendErrorResult(
+          client,
+          frame,
+          "AMBIGUOUS",
+          "oldText matches multiple locations in the file. Provide more context to make the match unique.",
+        );
+        return;
+      }
+      const updated = raw.slice(0, idx) + params.newText + raw.slice(idx + params.oldText.length);
+      await fsPromises.writeFile(resolved, updated, "utf-8");
+      await sendJsonPayloadResult(client, frame, { ok: true });
+    } catch (err) {
+      const message = String(err);
+      const code = message.includes("ENOENT")
+        ? "NOT_FOUND"
+        : message.includes("EACCES")
+          ? "PERMISSION_DENIED"
+          : "INVALID_REQUEST";
+      await sendErrorResult(client, frame, code, message);
     }
     return;
   }
