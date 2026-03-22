@@ -28,7 +28,7 @@ export const DEFAULT_MEMORY_FLUSH_PROMPT = [
   MEMORY_FLUSH_READ_ONLY_HINT,
   MEMORY_FLUSH_APPEND_ONLY_HINT,
   "Do NOT create timestamped variant files (e.g., YYYY-MM-DD-HHMM.md); always use the canonical YYYY-MM-DD.md filename.",
-  `If nothing to store, reply with ${SILENT_REPLY_TOKEN}.`,
+  `If nothing to store, your entire reply must be ONLY: ${SILENT_REPLY_TOKEN} — the complete message, nothing else.`,
 ].join(" ");
 
 export const DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT = [
@@ -37,7 +37,7 @@ export const DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT = [
   MEMORY_FLUSH_TARGET_HINT,
   MEMORY_FLUSH_READ_ONLY_HINT,
   MEMORY_FLUSH_APPEND_ONLY_HINT,
-  `You may reply, but usually ${SILENT_REPLY_TOKEN} is correct.`,
+  `If no user-visible reply is needed, your entire reply must be ONLY: ${SILENT_REPLY_TOKEN} — the complete message, nothing else.`,
 ].join(" ");
 
 function formatDateStampInTimezone(nowMs: number, timezone: string): string {
@@ -145,7 +145,7 @@ function ensureNoReplyHint(text: string): string {
   if (text.includes(SILENT_REPLY_TOKEN)) {
     return text;
   }
-  return `${text}\n\nIf no user-visible reply is needed, start with ${SILENT_REPLY_TOKEN}.`;
+  return `${text}\n\nIf no user-visible reply is needed, your entire reply must be ONLY: ${SILENT_REPLY_TOKEN} — nothing else in the message.`;
 }
 
 function ensureMemoryFlushSafetyHints(text: string): string {

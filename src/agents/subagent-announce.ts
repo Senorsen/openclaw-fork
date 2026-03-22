@@ -973,7 +973,7 @@ export function buildSubagentSystemPrompt(params: {
       "Auto-announce is push-based. After spawning children, do NOT call sessions_list, sessions_history, exec sleep, or any polling tool.",
       "Wait for completion events to arrive as user messages.",
       "Track expected child session keys and only send your final answer after completion events for ALL expected children arrive.",
-      "If a child completion event arrives AFTER you already sent your final answer, reply ONLY with NO_REPLY.",
+      "If a child completion event arrives AFTER you already sent your final answer, your entire reply must be ONLY: NO_REPLY — the complete message, nothing else.",
       "Do NOT repeatedly poll `subagents list` in a loop unless you are actively debugging or intervening.",
       "Coordinate their work and synthesize results before reporting back.",
       ...(acpEnabled

@@ -1,6 +1,6 @@
 import { splitMediaFromOutput } from "../../media/parse.js";
 import { parseInlineDirectives } from "../../utils/directive-tags.js";
-import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
+import { isSilentReplyText, stripSilentToken, SILENT_REPLY_TOKEN } from "../tokens.js";
 
 export type ReplyDirectiveParseResult = {
   text: string;
@@ -33,7 +33,12 @@ export function parseReplyDirectives(
   const silentToken = options.silentToken ?? SILENT_REPLY_TOKEN;
   const isSilent = isSilentReplyText(text, silentToken);
   if (isSilent) {
+    // Entire message is just the silent token — suppress it completely.
     text = "";
+  } else if (text.includes(silentToken)) {
+    // Mixed content: strip a trailing silent token so the real reply is
+    // delivered without the NO_REPLY suffix leaking to the channel.
+    text = stripSilentToken(text, silentToken);
   }
 
   return {

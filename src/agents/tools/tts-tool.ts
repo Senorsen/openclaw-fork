@@ -21,7 +21,7 @@ export function createTtsTool(opts?: {
   return {
     label: "TTS",
     name: "tts",
-    description: `Convert text to speech. Audio is delivered automatically from the tool result — reply with ${SILENT_REPLY_TOKEN} after a successful call to avoid duplicate messages.`,
+    description: `Convert text to speech. Audio is delivered automatically from the tool result — reply with NO_REPLY after a successful call to avoid duplicate messages. IMPORTANT: your entire reply must be ONLY "${SILENT_REPLY_TOKEN}" — nothing else before or after it.`,
     parameters: TtsToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;

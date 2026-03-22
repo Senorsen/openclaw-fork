@@ -142,7 +142,7 @@ function buildMessagingSection(params: {
           "- Use `message` for proactive sends + channel actions (polls, reactions, etc.).",
           "- For `action=send`, include `to` and `message`.",
           `- If multiple channels are configured, pass \`channel\` (${params.messageChannelOptions}).`,
-          `- If you use \`message\` (\`action=send\`) to deliver your user-visible reply, respond with ONLY: ${SILENT_REPLY_TOKEN} (avoid duplicate replies).`,
+          `- If you use \`message\` (\`action=send\`) to deliver your user-visible reply, your entire final reply must be ONLY: ${SILENT_REPLY_TOKEN} — the complete message, nothing else (avoids duplicate replies).`,
           params.inlineButtonsEnabled
             ? "- Inline buttons supported. Use `action=send` with `buttons=[[{text,callback_data,style?}]]`; `style` can be `primary`, `success`, or `danger`."
             : params.runtimeChannel
@@ -652,16 +652,18 @@ export function buildAgentSystemPrompt(params: {
   if (!isMinimal) {
     lines.push(
       "## Silent Replies",
-      `When you have nothing to say, respond with ONLY: ${SILENT_REPLY_TOKEN}`,
+      `When you have nothing to say, send ONLY the token: ${SILENT_REPLY_TOKEN}`,
+      `⚠️ CRITICAL: ${SILENT_REPLY_TOKEN} must be your ENTIRE message — the complete message, nothing before and nothing after.`,
       "",
-      "⚠️ Rules:",
-      "- It must be your ENTIRE message — nothing else",
-      `- Never append it to an actual response (never include "${SILENT_REPLY_TOKEN}" in real replies)`,
+      "Rules:",
+      `- The message must contain ONLY "${SILENT_REPLY_TOKEN}" — no other text, no explanation, no prefix, no suffix`,
+      `- Never append "${SILENT_REPLY_TOKEN}" to a real reply — if you have something to say, say it without "${SILENT_REPLY_TOKEN}"`,
       "- Never wrap it in markdown or code blocks",
       "",
+      `❌ Wrong: "Today is Sunday, not a workday.\\n\\n${SILENT_REPLY_TOKEN}"`,
       `❌ Wrong: "Here's help... ${SILENT_REPLY_TOKEN}"`,
-      `❌ Wrong: "${SILENT_REPLY_TOKEN}"`,
-      `✅ Right: ${SILENT_REPLY_TOKEN}`,
+      `❌ Wrong: "\`\`\`\\n${SILENT_REPLY_TOKEN}\\n\`\`\`"`,
+      `✅ Right (entire message is just): ${SILENT_REPLY_TOKEN}`,
       "",
     );
   }
@@ -673,7 +675,8 @@ export function buildAgentSystemPrompt(params: {
       heartbeatPromptLine,
       "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
       "HEARTBEAT_OK",
-      'OpenClaw treats a leading/trailing "HEARTBEAT_OK" as a heartbeat ack (and may discard it).',
+      '⚠️ HEARTBEAT_OK must be your ENTIRE message — nothing before or after it.',
+      'OpenClaw treats a message consisting solely of "HEARTBEAT_OK" as a heartbeat ack (and discards it).',
       'If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
       "",
     );

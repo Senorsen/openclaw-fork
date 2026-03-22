@@ -48,8 +48,8 @@ function buildBootPrompt(content: string) {
     "",
     "If BOOT.md asks you to send a message, use the message tool (action=send with channel + target).",
     "Use the `target` field (not `to`) for message tool destinations.",
-    `After sending with the message tool, reply with ONLY: ${SILENT_REPLY_TOKEN}.`,
-    `If nothing needs attention, reply with ONLY: ${SILENT_REPLY_TOKEN}.`,
+    `After sending with the message tool, your entire reply must be ONLY: ${SILENT_REPLY_TOKEN} — the complete message, nothing else.`,
+    `If nothing needs attention, your entire reply must be ONLY: ${SILENT_REPLY_TOKEN} — the complete message, nothing else.`,
   ].join("\n");
 }
 
