@@ -1098,6 +1098,8 @@ export const nodeHandlers: GatewayRequestHandlers = {
         return;
       }
       const payload = res.payloadJSON ? safeParseJson(res.payloadJSON) : res.payload;
+      // Omit payloadJSON when payload is already the parsed equivalent — avoids redundant context
+      const payloadJSON = payload !== undefined ? undefined : (res.payloadJSON ?? null);
       respond(
         true,
         {
@@ -1105,7 +1107,7 @@ export const nodeHandlers: GatewayRequestHandlers = {
           nodeId,
           command,
           payload,
-          payloadJSON: res.payloadJSON ?? null,
+          ...(payloadJSON !== undefined ? { payloadJSON } : {}),
         },
         undefined,
       );
