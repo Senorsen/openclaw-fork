@@ -1839,6 +1839,10 @@ export async function runEmbeddedAttempt(
         throw new Error("Embedded agent session missing");
       }
       const activeSession = session;
+      // Patch: process all queued steering/follow-up messages in batch instead
+      // of one-at-a-time, so multi-message bursts are fully delivered.
+      activeSession.setSteeringMode("all");
+      activeSession.setFollowUpMode("all");
       abortSessionForYield = () => {
         yieldAbortSettled = Promise.resolve(activeSession.abort());
       };
