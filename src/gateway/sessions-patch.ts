@@ -19,6 +19,7 @@ import {
 } from "../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
+import type { SessionToolConstraints } from "../config/sessions/types.js";
 import {
   isAcpSessionKey,
   isSubagentSessionKey,
@@ -211,6 +212,37 @@ export async function applySessionsPatchToStore(params: {
         return invalid("subagentControlScope cannot be changed once set");
       }
       next.subagentControlScope = normalized;
+    }
+  }
+
+  if ("toolConstraints" in patch) {
+    const raw = patch.toolConstraints as SessionToolConstraints | null | undefined;
+    if (raw === null) {
+      delete next.toolConstraints;
+    } else if (raw !== undefined) {
+      if (!supportsSpawnLineage(storeKey)) {
+        return invalid("toolConstraints is only supported for subagent:* or acp:* sessions");
+      }
+      if (raw.allowedTools && raw.deniedTools) {
+        return invalid("toolConstraints: allowedTools and deniedTools are mutually exclusive");
+      }
+      const constraints: SessionToolConstraints = {};
+      if (raw.browserProfile) {
+        constraints.browserProfile = String(raw.browserProfile).trim();
+      }
+      if (Array.isArray(raw.allowedTools) && raw.allowedTools.length > 0) {
+        constraints.allowedTools = raw.allowedTools
+          .map((t: string) => String(t).trim())
+          .filter((t: string) => t.length > 0);
+      }
+      if (Array.isArray(raw.deniedTools) && raw.deniedTools.length > 0) {
+        constraints.deniedTools = raw.deniedTools
+          .map((t: string) => String(t).trim())
+          .filter((t: string) => t.length > 0);
+      }
+      if (Object.keys(constraints).length > 0) {
+        next.toolConstraints = constraints;
+      }
     }
   }
 

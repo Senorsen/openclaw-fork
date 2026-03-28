@@ -65,6 +65,15 @@ export type AcpSessionRuntimeOptions = {
   backendExtras?: Record<string, string>;
 };
 
+export type SessionToolConstraints = {
+  /** Force subagent browser tool calls to use this profile; block target=node. */
+  browserProfile?: string;
+  /** If set, only these tools are allowed; all others are rejected. */
+  allowedTools?: string[];
+  /** If set, these tools are rejected; all others are allowed. */
+  deniedTools?: string[];
+};
+
 export type SessionEntry = {
   /**
    * Last delivered heartbeat payload (used to suppress duplicate heartbeat notifications).
@@ -88,6 +97,8 @@ export type SessionEntry = {
   subagentRole?: "orchestrator" | "leaf";
   /** Explicit control scope assigned at spawn time for subagent control decisions. */
   subagentControlScope?: "children" | "none";
+  /** Tool-level constraints set at spawn time (browser profile lock, tool allow/deny lists). */
+  toolConstraints?: SessionToolConstraints;
   systemSent?: boolean;
   abortedLastRun?: boolean;
   /**

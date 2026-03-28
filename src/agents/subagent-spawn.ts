@@ -12,6 +12,7 @@ import {
   parseAgentSessionKey,
 } from "../routing/session-key.js";
 import { normalizeDeliveryContext } from "../utils/delivery-context.js";
+import type { SessionToolConstraints } from "../config/sessions/types.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 import { AGENT_LANE_SUBAGENT } from "./lanes.js";
 import { resolveSubagentSpawnModelSelection } from "./model-selection.js";
@@ -63,6 +64,7 @@ export type SpawnSubagentParams = {
     mimeType?: string;
   }>;
   attachMountPath?: string;
+  toolConstraints?: SessionToolConstraints;
 };
 
 export type SpawnSubagentContext = {
@@ -442,6 +444,7 @@ export async function spawnSubagentDirect(
     spawnDepth: childDepth,
     subagentRole: childCapabilities.role === "main" ? null : childCapabilities.role,
     subagentControlScope: childCapabilities.controlScope,
+    ...(params.toolConstraints ? { toolConstraints: params.toolConstraints } : {}),
   });
   if (spawnDepthPatchError) {
     return {

@@ -63,6 +63,15 @@ const SessionsSpawnToolSchema = Type.Object({
       mountPath: Type.Optional(Type.String()),
     }),
   ),
+  browserProfile: Type.Optional(Type.String({
+    description: "Lock subagent browser tool to this profile name; blocks target=node.",
+  })),
+  allowedTools: Type.Optional(Type.Array(Type.String(), {
+    description: "Allowlist of tool names the subagent may use. Mutually exclusive with deniedTools.",
+  })),
+  deniedTools: Type.Optional(Type.Array(Type.String(), {
+    description: "Denylist of tool names the subagent may not use. Mutually exclusive with allowedTools.",
+  })),
 });
 
 export function createSessionsSpawnTool(
@@ -126,6 +135,28 @@ export function createSessionsSpawnTool(
             mimeType?: string;
           }>)
         : undefined;
+
+      const browserProfile = readStringParam(params, "browserProfile");
+      const allowedTools = Array.isArray(params.allowedTools)
+        ? (params.allowedTools as string[]).map((t) => t.trim()).filter((t) => t.length > 0)
+        : undefined;
+      const deniedTools = Array.isArray(params.deniedTools)
+        ? (params.deniedTools as string[]).map((t) => t.trim()).filter((t) => t.length > 0)
+        : undefined;
+      if (allowedTools?.length && deniedTools?.length) {
+        return jsonResult({
+          status: "error",
+          error: "allowedTools and deniedTools are mutually exclusive; use one or the other.",
+        });
+      }
+      const toolConstraints =
+        browserProfile || allowedTools?.length || deniedTools?.length
+          ? {
+              ...(browserProfile ? { browserProfile } : {}),
+              ...(allowedTools?.length ? { allowedTools } : {}),
+              ...(deniedTools?.length ? { deniedTools } : {}),
+            }
+          : undefined;
 
       if (streamTo && runtime !== "acp") {
         return jsonResult({
@@ -191,6 +222,7 @@ export function createSessionsSpawnTool(
             params.attachAs && typeof params.attachAs === "object"
               ? readStringParam(params.attachAs as Record<string, unknown>, "mountPath")
               : undefined,
+          toolConstraints,
         },
         {
           agentSessionKey: opts?.agentSessionKey,

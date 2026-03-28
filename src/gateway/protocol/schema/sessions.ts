@@ -80,6 +80,19 @@ export const SessionsPatchParamsSchema = Type.Object(
     subagentControlScope: Type.Optional(
       Type.Union([Type.Literal("children"), Type.Literal("none"), Type.Null()]),
     ),
+    toolConstraints: Type.Optional(
+      Type.Union([
+        Type.Object(
+          {
+            browserProfile: Type.Optional(Type.String()),
+            allowedTools: Type.Optional(Type.Array(Type.String())),
+            deniedTools: Type.Optional(Type.Array(Type.String())),
+          },
+          { additionalProperties: false },
+        ),
+        Type.Null(),
+      ]),
+    ),
     sendPolicy: Type.Optional(
       Type.Union([Type.Literal("allow"), Type.Literal("deny"), Type.Null()]),
     ),

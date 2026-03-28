@@ -1,4 +1,8 @@
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
+import type { SessionToolConstraints } from "../config/sessions/types.js";
+import { loadConfig } from "../config/config.js";
+import { loadSessionStore, resolveStorePath } from "../config/sessions.js";
+import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import type { SessionState } from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
@@ -26,6 +30,109 @@ const MAX_LOOP_WARNING_KEYS = 256;
 let beforeToolCallRuntimePromise: Promise<
   typeof import("./pi-tools.before-tool-call.runtime.js")
 > | null = null;
+
+/**
+ * Cache of tool constraints per session key.
+ * Populated lazily from the session store on first access; TTL-based expiry
+ * keeps it from growing unbounded or going stale.
+ */
+const toolConstraintsCache = new Map<
+  string,
+  { constraints: SessionToolConstraints | undefined; loadedAt: number }
+>();
+const TOOL_CONSTRAINTS_CACHE_TTL_MS = 30_000;
+const MAX_TOOL_CONSTRAINTS_CACHE_SIZE = 128;
+
+function loadToolConstraintsForSession(
+  sessionKey: string | undefined,
+): SessionToolConstraints | undefined {
+  if (!sessionKey) {
+    return undefined;
+  }
+  const now = Date.now();
+  const cached = toolConstraintsCache.get(sessionKey);
+  if (cached && now - cached.loadedAt < TOOL_CONSTRAINTS_CACHE_TTL_MS) {
+    return cached.constraints;
+  }
+  let constraints: SessionToolConstraints | undefined;
+  try {
+    const cfg = loadConfig();
+    const agentId = resolveAgentIdFromSessionKey(sessionKey);
+    const storePath = resolveStorePath(cfg.session?.store, { agentId });
+    const store = loadSessionStore(storePath);
+    const entry = store[sessionKey];
+    constraints = entry?.toolConstraints ?? undefined;
+  } catch {
+    constraints = undefined;
+  }
+  // Evict oldest if cache is at capacity.
+  if (toolConstraintsCache.size >= MAX_TOOL_CONSTRAINTS_CACHE_SIZE) {
+    const oldest = toolConstraintsCache.keys().next().value;
+    if (oldest) {
+      toolConstraintsCache.delete(oldest);
+    }
+  }
+  toolConstraintsCache.set(sessionKey, { constraints, loadedAt: now });
+  return constraints;
+}
+
+/**
+ * Enforce tool-level constraints (allowedTools / deniedTools / browserProfile).
+ * Returns a HookOutcome if the call should be blocked or params adjusted;
+ * `null` means no constraint applies and the call should proceed as-is.
+ */
+function enforceToolConstraints(
+  toolName: string,
+  params: unknown,
+  sessionKey: string | undefined,
+): HookOutcome | null {
+  const constraints = loadToolConstraintsForSession(sessionKey);
+  if (!constraints) {
+    return null;
+  }
+  const normalizedName = normalizeToolName(toolName);
+
+  // --- allowedTools / deniedTools ---
+  if (constraints.allowedTools && constraints.allowedTools.length > 0) {
+    const allowed = new Set(constraints.allowedTools.map((t) => normalizeToolName(t)));
+    if (!allowed.has(normalizedName)) {
+      return {
+        blocked: true,
+        reason: `Tool "${toolName}" is not in the allowed tools list for this session. Allowed: ${constraints.allowedTools.join(", ")}`,
+      };
+    }
+  }
+  if (constraints.deniedTools && constraints.deniedTools.length > 0) {
+    const denied = new Set(constraints.deniedTools.map((t) => normalizeToolName(t)));
+    if (denied.has(normalizedName)) {
+      return {
+        blocked: true,
+        reason: `Tool "${toolName}" is denied for this session.`,
+      };
+    }
+  }
+
+  // --- browserProfile enforcement ---
+  if (constraints.browserProfile && normalizedName === "browser") {
+    if (isPlainObject(params)) {
+      const p = params as Record<string, unknown>;
+      // Block target=node — force use of the specified profile instead.
+      if (p.target === "node") {
+        return {
+          blocked: true,
+          reason: `Browser target "node" (node browser proxy) is not allowed for this session. Use profile="${constraints.browserProfile}" instead.`,
+        };
+      }
+      // Override/inject the profile parameter.
+      return {
+        blocked: false,
+        params: { ...p, profile: constraints.browserProfile },
+      };
+    }
+  }
+
+  return null;
+}
 
 function loadBeforeToolCallRuntime() {
   beforeToolCallRuntimePromise ??= import("./pi-tools.before-tool-call.runtime.js");
@@ -95,7 +202,7 @@ export async function runBeforeToolCallHook(args: {
   ctx?: HookContext;
 }): Promise<HookOutcome> {
   const toolName = normalizeToolName(args.toolName || "tool");
-  const params = args.params;
+  let params = args.params;
 
   if (args.ctx?.sessionKey) {
     const { getDiagnosticSessionState, logToolLoopAction, detectToolCallLoop, recordToolCall } =
@@ -147,9 +254,20 @@ export async function runBeforeToolCallHook(args: {
     recordToolCall(sessionState, toolName, params, args.toolCallId, args.ctx.loopDetection);
   }
 
+  // --- Tool constraints enforcement (subagent restrictions) ---
+  const constraintOutcome = enforceToolConstraints(toolName, params, args.ctx?.sessionKey);
+  if (constraintOutcome) {
+    if (constraintOutcome.blocked) {
+      return constraintOutcome;
+    }
+    // Constraints adjusted params (e.g. browser profile override).
+    // Continue with modified params for downstream hooks.
+    params = constraintOutcome.params;
+  }
+
   const hookRunner = getGlobalHookRunner();
   if (!hookRunner?.hasHooks("before_tool_call")) {
-    return { blocked: false, params: args.params };
+    return { blocked: false, params };
   }
 
   try {
