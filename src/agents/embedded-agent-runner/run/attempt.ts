@@ -2381,6 +2381,10 @@ export async function runEmbeddedAttempt(
         }
         return Promise.allSettled(promises).then(() => undefined);
       };
+      // Patch: process all queued steering/follow-up messages in batch instead
+      // of one-at-a-time, so multi-message bursts are fully delivered.
+      activeSession.setSteeringMode("all");
+      activeSession.setFollowUpMode("all");
       abortSessionForYield = () => {
         yieldAbortSettled = abortActiveSession();
       };
