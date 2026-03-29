@@ -105,8 +105,19 @@ export function buildInboundMediaNote(ctx: MsgContext): string | undefined {
       index,
     }))
     .filter((entry) => {
+      // Keep non-audio suppressed attachments so the agent can see the full file path
+      // even when media understanding already produced a description. This lets agents
+      // re-analyse images via the `image` tool using the local path.
       if (suppressed.has(entry.index)) {
-        return false;
+        const hasPerEntryType = types !== undefined;
+        const isAudioByMime = hasPerEntryType && entry.type?.toLowerCase().startsWith("audio/");
+        const isAudioEntry = isAudioPath(entry.path) || isAudioByMime;
+        // Still strip audio attachments — transcripts are already in the context
+        if (isAudioEntry) {
+          return false;
+        }
+        // Keep image/video attachments to expose file path
+        return true;
       }
       // Strip audio attachments when transcription succeeded - the transcript is already
       // available in the context, raw audio binary would only waste tokens (issue #4197)
