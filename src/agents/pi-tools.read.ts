@@ -804,12 +804,8 @@ export function createHostWorkspaceWriteTool(
   const base = createWriteTool(root, {
     operations: createHostWriteOperations(root, options),
   }) as unknown as AnyAgentTool;
-<<<<<<< HEAD
-  return wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.write);
-=======
-  const wrapped = wrapToolParamNormalization(base, CLAUDE_PARAM_GROUPS.write);
-  // Inject `node` parameter into the schema
-  const withNodeParam = injectNodeParam(wrapped);
+  const validated = wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.write);
+  const withNodeParam = injectNodeParam(validated);
   if (!options?.gatewayOpts) {
     return withNodeParam;
   }
@@ -822,20 +818,17 @@ export function createHostWorkspaceWriteTool(
       signal?: AbortSignal,
       onUpdate?: (result: AgentToolResult<unknown>) => void,
     ) => {
-      const normalized = normalizeToolParams(params);
       const record =
-        normalized ??
-        (params && typeof params === "object" ? (params as Record<string, unknown>) : undefined);
+        params && typeof params === "object" ? (params as Record<string, unknown>) : undefined;
       const nodeName = typeof record?.node === "string" ? record.node.trim() : "";
       if (nodeName) {
         const filePath = typeof record?.path === "string" ? String(record.path) : "";
         const content = typeof record?.content === "string" ? String(record.content) : "";
         return executeNodeWrite(gatewayOpts, nodeName, { path: filePath, content });
       }
-      return wrapped.execute(toolCallId, params, signal, onUpdate);
+      return validated.execute(toolCallId, params, signal, onUpdate);
     },
   };
->>>>>>> b253e68d33 (feat: add node parameter to read/write/edit tools for remote file operations)
 }
 
 export function createHostWorkspaceEditTool(
@@ -845,17 +838,12 @@ export function createHostWorkspaceEditTool(
   const base = createEditTool(root, {
     operations: createHostEditOperations(root, options),
   }) as unknown as AnyAgentTool;
-<<<<<<< HEAD
   const withRecovery = wrapEditToolWithRecovery(base, {
     root,
     readFile: (absolutePath: string) => fs.readFile(absolutePath, "utf-8"),
   });
-  return wrapToolParamValidation(withRecovery, REQUIRED_PARAM_GROUPS.edit);
-=======
-  const withRecovery = wrapHostEditToolWithPostWriteRecovery(base, root);
-  const wrapped = wrapToolParamNormalization(withRecovery, CLAUDE_PARAM_GROUPS.edit);
-  // Inject `node` parameter into the schema
-  const withNodeParam = injectNodeParam(wrapped);
+  const validated = wrapToolParamValidation(withRecovery, REQUIRED_PARAM_GROUPS.edit);
+  const withNodeParam = injectNodeParam(validated);
   if (!options?.gatewayOpts) {
     return withNodeParam;
   }
@@ -868,10 +856,8 @@ export function createHostWorkspaceEditTool(
       signal?: AbortSignal,
       onUpdate?: (result: AgentToolResult<unknown>) => void,
     ) => {
-      const normalized = normalizeToolParams(params);
       const record =
-        normalized ??
-        (params && typeof params === "object" ? (params as Record<string, unknown>) : undefined);
+        params && typeof params === "object" ? (params as Record<string, unknown>) : undefined;
       const nodeName = typeof record?.node === "string" ? record.node.trim() : "";
       if (nodeName) {
         const filePath = typeof record?.path === "string" ? String(record.path) : "";
@@ -879,34 +865,21 @@ export function createHostWorkspaceEditTool(
         const newText = typeof record?.newText === "string" ? String(record.newText) : "";
         return executeNodeEdit(gatewayOpts, nodeName, { path: filePath, oldText, newText });
       }
-      return wrapped.execute(toolCallId, params, signal, onUpdate);
+      return validated.execute(toolCallId, params, signal, onUpdate);
     },
   };
->>>>>>> b253e68d33 (feat: add node parameter to read/write/edit tools for remote file operations)
 }
 
 export function createOpenClawReadTool(
   base: AnyAgentTool,
   options?: OpenClawReadToolOptions,
 ): AnyAgentTool {
-<<<<<<< HEAD
-  return {
-    ...base,
-    execute: async (toolCallId, params, signal) => {
-      const record = getToolParamsRecord(params);
-      assertRequiredParams(record, REQUIRED_PARAM_GROUPS.read, base.name);
-=======
-  const patched = patchToolSchemaForClaudeCompatibility(base);
-  // Inject `node` parameter into the schema
-  const withNodeParam = injectNodeParam(patched);
+  const withNodeParam = injectNodeParam(base);
   return {
     ...withNodeParam,
     execute: async (toolCallId, params, signal) => {
-      const normalized = normalizeToolParams(params);
-      const record =
-        normalized ??
-        (params && typeof params === "object" ? (params as Record<string, unknown>) : undefined);
-      assertRequiredParams(record, CLAUDE_PARAM_GROUPS.read, base.name);
+      const record = getToolParamsRecord(params);
+      assertRequiredParams(record, REQUIRED_PARAM_GROUPS.read, base.name);
 
       // Check for node parameter — if present, route to node RPC
       const nodeName = typeof record?.node === "string" ? record.node.trim() : "";
@@ -919,7 +892,6 @@ export function createOpenClawReadTool(
         });
       }
 
->>>>>>> b253e68d33 (feat: add node parameter to read/write/edit tools for remote file operations)
       const result = await executeReadWithAdaptivePaging({
         base,
         toolCallId,

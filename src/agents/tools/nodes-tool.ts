@@ -136,11 +136,7 @@ export function createNodesTool(options?: {
   return {
     label: "Nodes",
     name: "nodes",
-<<<<<<< HEAD
-    ownerOnly: isOpenClawOwnerOnlyCoreToolName("nodes"),
-=======
     // ownerOnly removed to allow subagent access (patch)
->>>>>>> d423fab120 (patch: allow nodes tool for subagents, increase invoke timeout to 60s)
     description:
       "Discover/control paired nodes: status, describe, pairing, notify, camera/photos/screen/location/notifications/invoke. Use file_fetch for files.",
     parameters: NodesToolSchema,
