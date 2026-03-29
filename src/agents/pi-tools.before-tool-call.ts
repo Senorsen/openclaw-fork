@@ -131,6 +131,53 @@ function enforceToolConstraints(
     }
   }
 
+  // --- allowedNodes / deniedNodes enforcement ---
+  if (constraints.allowedNodes?.length || constraints.deniedNodes?.length) {
+    if (isPlainObject(params)) {
+      const p = params as Record<string, unknown>;
+      // Extract the node identifier from tool params.
+      // - browser: node param (only when target=node)
+      // - read/write/edit: node param
+      // - nodes: node param (for invoke and other actions)
+      let targetNode: string | undefined;
+      if (normalizedName === "browser") {
+        if (p.target === "node" && typeof p.node === "string" && p.node.trim()) {
+          targetNode = p.node.trim();
+        }
+      } else if (
+        normalizedName === "read" ||
+        normalizedName === "write" ||
+        normalizedName === "edit" ||
+        normalizedName === "nodes"
+      ) {
+        if (typeof p.node === "string" && p.node.trim()) {
+          targetNode = p.node.trim();
+        }
+      }
+
+      if (targetNode) {
+        if (constraints.allowedNodes && constraints.allowedNodes.length > 0) {
+          const allowed = new Set(constraints.allowedNodes.map((n) => n.toLowerCase()));
+          if (!allowed.has(targetNode.toLowerCase())) {
+            return {
+              blocked: true,
+              reason: `Node "${targetNode}" is not in the allowed nodes list for this session. Allowed: ${constraints.allowedNodes.join(", ")}`,
+            };
+          }
+        }
+        if (constraints.deniedNodes && constraints.deniedNodes.length > 0) {
+          const denied = new Set(constraints.deniedNodes.map((n) => n.toLowerCase()));
+          if (denied.has(targetNode.toLowerCase())) {
+            return {
+              blocked: true,
+              reason: `Node "${targetNode}" is denied for this session.`,
+            };
+          }
+        }
+      }
+    }
+  }
+
   return null;
 }
 

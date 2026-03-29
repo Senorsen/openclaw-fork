@@ -87,6 +87,8 @@ export const SessionsPatchParamsSchema = Type.Object(
             browserProfile: Type.Optional(Type.String()),
             allowedTools: Type.Optional(Type.Array(Type.String())),
             deniedTools: Type.Optional(Type.Array(Type.String())),
+            allowedNodes: Type.Optional(Type.Array(Type.String())),
+            deniedNodes: Type.Optional(Type.Array(Type.String())),
           },
           { additionalProperties: false },
         ),

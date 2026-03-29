@@ -72,6 +72,10 @@ export type SessionToolConstraints = {
   allowedTools?: string[];
   /** If set, these tools are rejected; all others are allowed. */
   deniedTools?: string[];
+  /** If set, only these nodes may be accessed; requests to other nodes are rejected. */
+  allowedNodes?: string[];
+  /** If set, these nodes are blocked; requests to other nodes are allowed. */
+  deniedNodes?: string[];
 };
 
 export type SessionEntry = {

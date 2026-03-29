@@ -226,6 +226,9 @@ export async function applySessionsPatchToStore(params: {
       if (raw.allowedTools && raw.deniedTools) {
         return invalid("toolConstraints: allowedTools and deniedTools are mutually exclusive");
       }
+      if (raw.allowedNodes && raw.deniedNodes) {
+        return invalid("toolConstraints: allowedNodes and deniedNodes are mutually exclusive");
+      }
       const constraints: SessionToolConstraints = {};
       if (raw.browserProfile) {
         constraints.browserProfile = String(raw.browserProfile).trim();
@@ -239,6 +242,16 @@ export async function applySessionsPatchToStore(params: {
         constraints.deniedTools = raw.deniedTools
           .map((t: string) => String(t).trim())
           .filter((t: string) => t.length > 0);
+      }
+      if (Array.isArray(raw.allowedNodes) && raw.allowedNodes.length > 0) {
+        constraints.allowedNodes = raw.allowedNodes
+          .map((n: string) => String(n).trim())
+          .filter((n: string) => n.length > 0);
+      }
+      if (Array.isArray(raw.deniedNodes) && raw.deniedNodes.length > 0) {
+        constraints.deniedNodes = raw.deniedNodes
+          .map((n: string) => String(n).trim())
+          .filter((n: string) => n.length > 0);
       }
       if (Object.keys(constraints).length > 0) {
         next.toolConstraints = constraints;

@@ -72,6 +72,12 @@ const SessionsSpawnToolSchema = Type.Object({
   deniedTools: Type.Optional(Type.Array(Type.String(), {
     description: "Denylist of tool names the subagent may not use. Mutually exclusive with allowedTools.",
   })),
+  allowedNodes: Type.Optional(Type.Array(Type.String(), {
+    description: "Allowlist of node names the subagent may access. Mutually exclusive with deniedNodes.",
+  })),
+  deniedNodes: Type.Optional(Type.Array(Type.String(), {
+    description: "Denylist of node names the subagent may not access. Mutually exclusive with allowedNodes.",
+  })),
 });
 
 export function createSessionsSpawnTool(
@@ -143,18 +149,32 @@ export function createSessionsSpawnTool(
       const deniedTools = Array.isArray(params.deniedTools)
         ? (params.deniedTools as string[]).map((t) => t.trim()).filter((t) => t.length > 0)
         : undefined;
+      const allowedNodes = Array.isArray(params.allowedNodes)
+        ? (params.allowedNodes as string[]).map((n) => n.trim()).filter((n) => n.length > 0)
+        : undefined;
+      const deniedNodes = Array.isArray(params.deniedNodes)
+        ? (params.deniedNodes as string[]).map((n) => n.trim()).filter((n) => n.length > 0)
+        : undefined;
       if (allowedTools?.length && deniedTools?.length) {
         return jsonResult({
           status: "error",
           error: "allowedTools and deniedTools are mutually exclusive; use one or the other.",
         });
       }
+      if (allowedNodes?.length && deniedNodes?.length) {
+        return jsonResult({
+          status: "error",
+          error: "allowedNodes and deniedNodes are mutually exclusive; use one or the other.",
+        });
+      }
       const toolConstraints =
-        browserProfile || allowedTools?.length || deniedTools?.length
+        browserProfile || allowedTools?.length || deniedTools?.length || allowedNodes?.length || deniedNodes?.length
           ? {
               ...(browserProfile ? { browserProfile } : {}),
               ...(allowedTools?.length ? { allowedTools } : {}),
               ...(deniedTools?.length ? { deniedTools } : {}),
+              ...(allowedNodes?.length ? { allowedNodes } : {}),
+              ...(deniedNodes?.length ? { deniedNodes } : {}),
             }
           : undefined;
 
