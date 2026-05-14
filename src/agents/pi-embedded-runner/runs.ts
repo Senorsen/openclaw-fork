@@ -3,6 +3,7 @@ import {
   logMessageQueued,
   logSessionStateChange,
 } from "../../logging/diagnostic.js";
+import { validateSteerMessageInjection } from "../../shared/steer-message-injection-policy.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 
 type EmbeddedPiQueueHandle = {
@@ -37,7 +38,22 @@ export function queueEmbeddedPiMessage(sessionId: string, text: string): boolean
     diag.debug(`queue message failed: sessionId=${sessionId} reason=no_active_run`);
     return false;
   }
-  if (handle.isStopped ? handle.isStopped() : !handle.isStreaming()) {
+  const injectionPolicy = validateSteerMessageInjection({ sessionId, text });
+  if (!injectionPolicy.ok) {
+    diag.debug(`queue message failed: sessionId=${sessionId} reason=${injectionPolicy.reason}`);
+    return false;
+  }
+  let isMessageInjectable = false;
+  try {
+    isMessageInjectable =
+      handle.isStopped === undefined ? handle.isStreaming() : !handle.isStopped();
+  } catch (err) {
+    diag.warn(
+      `queue message failed: sessionId=${sessionId} reason=injectable_check_failed err=${String(err)}`,
+    );
+    return false;
+  }
+  if (!isMessageInjectable) {
     diag.debug(`queue message failed: sessionId=${sessionId} reason=not_injectable`);
     return false;
   }

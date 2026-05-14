@@ -68,7 +68,6 @@ export async function runReplyAgent(params: {
   shouldSteer: boolean;
   shouldFollowup: boolean;
   isActive: boolean;
-  isStreaming: boolean;
   opts?: GetReplyOptions;
   typing: TypingController;
   sessionEntry?: SessionEntry;
@@ -99,7 +98,6 @@ export async function runReplyAgent(params: {
     shouldSteer,
     shouldFollowup,
     isActive,
-    isStreaming,
     opts,
     typing,
     sessionEntry,

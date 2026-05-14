@@ -2230,11 +2230,13 @@ export async function runEmbeddedAttempt(
         getCompactionCount,
       } = subscription;
 
+      let acceptingSteerMessages = true;
       const queueHandle: EmbeddedPiQueueHandle = {
         queueMessage: async (text: string) => {
           await activeSession.steer(text);
         },
         isStreaming: () => activeSession.isStreaming,
+        isStopped: () => !acceptingSteerMessages || aborted || runAbortController.signal.aborted,
         isCompacting: () => subscription.isCompacting(),
         abort: abortRun,
       };
@@ -2490,6 +2492,7 @@ export async function runEmbeddedAttempt(
             promptErrorSource = "prompt";
           }
         } finally {
+          acceptingSteerMessages = false;
           log.debug(
             `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
           );
