@@ -398,8 +398,9 @@ function prepareEmbeddedAgentQueueMessage(
     diag.debug(`queue message failed: sessionId=${sessionId} reason=no_active_run`);
     return { kind: "complete", outcome: createQueueFailureOutcome(sessionId, "no_active_run") };
   }
-  if (!handle.isStreaming()) {
-    diag.debug(`queue message failed: sessionId=${sessionId} reason=not_streaming`);
+  const isInjectable = handle.isStopped ? !handle.isStopped() : handle.isStreaming();
+  if (!isInjectable) {
+    diag.debug(`queue message failed: sessionId=${sessionId} reason=not_injectable`);
     return { kind: "complete", outcome: createQueueFailureOutcome(sessionId, "not_streaming") };
   }
   if (handle.isCompacting()) {

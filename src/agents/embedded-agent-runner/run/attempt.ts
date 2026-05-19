@@ -3382,6 +3382,7 @@ export async function runEmbeddedAttempt(
         }
       };
 
+      let acceptingSteerMessages = true;
       const abortActiveRunExternally = () => {
         externalAbort = true;
         abortRun();
@@ -3398,6 +3399,7 @@ export async function runEmbeddedAttempt(
           await steerActiveSessionWithOptionalDeliveryWait(activeSession, text, options);
         },
         isStreaming: () => activeSession.isStreaming,
+        isStopped: () => !acceptingSteerMessages || aborted || runAbortController.signal.aborted,
         isCompacting: () => subscription.isCompacting(),
         supportsTranscriptCommitWait: true,
         sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
@@ -4496,6 +4498,7 @@ export async function runEmbeddedAttempt(
             promptErrorSource = "prompt";
           }
         } finally {
+          acceptingSteerMessages = false;
           log.debug(
             `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
           );
