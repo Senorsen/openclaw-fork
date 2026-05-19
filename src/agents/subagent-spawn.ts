@@ -143,9 +143,8 @@ export type SpawnSubagentParams = {
     mimeType?: string;
   }>;
   attachMountPath?: string;
+  toolConstraints?: import("../config/sessions/types.js").SessionToolConstraints;
 };
-
-export type SpawnSubagentContext = {
   agentSessionKey?: string;
   /** Separate key used only for completion routing, not sandbox policy. */
   completionOwnerKey?: string;
@@ -273,10 +272,11 @@ function buildDirectChildSessionPatch(patch: Record<string, unknown>): Partial<S
       }
     }
   }
+  if (patch.toolConstraints && typeof patch.toolConstraints === "object") {
+    entry.toolConstraints = patch.toolConstraints as SessionEntry["toolConstraints"];
+  }
   return entry;
 }
-
-function loadSubagentConfig() {
   return subagentSpawnDeps.getRuntimeConfig();
 }
 
@@ -921,6 +921,7 @@ export async function spawnSubagentDirect(
     subagentControlScope: childCapabilities.controlScope,
     ...inheritedToolAllowPatch(ctx.inheritedToolAllowlist),
     ...inheritedToolDenyPatch(ctx.inheritedToolDenylist),
+    ...(params.toolConstraints ? { toolConstraints: params.toolConstraints } : {}),
     ...plan.initialSessionPatch,
   };
 
