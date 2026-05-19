@@ -1,7 +1,7 @@
 /** Parses inline reply directives such as media, reply targets, audio, and silence. */
 import { splitMediaFromOutput } from "../../media/parse.js";
 import { parseInlineDirectives } from "../../utils/directive-tags.js";
-import { isSilentReplyPayloadText, SILENT_REPLY_TOKEN } from "../tokens.js";
+import { isSilentReplyPayloadText, stripSilentToken, SILENT_REPLY_TOKEN } from "../tokens.js";
 
 /** Parsed outbound reply directives and media extracted from model text. */
 export type ReplyDirectiveParseResult = {
@@ -47,8 +47,11 @@ export function parseReplyDirectives(
   const silentToken = options.silentToken ?? SILENT_REPLY_TOKEN;
   const isSilent = isSilentReplyPayloadText(text, silentToken);
   if (isSilent) {
-    // Silent payloads must not leak the control token into channel delivery.
+    // Entire message is just the silent token — suppress it completely.
     text = "";
+  } else if (text.includes(silentToken)) {
+    // Mixed content with trailing NO_REPLY — strip the token and deliver the rest.
+    text = stripSilentToken(text, silentToken);
   }
 
   return {
