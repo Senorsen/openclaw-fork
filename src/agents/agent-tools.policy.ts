@@ -34,6 +34,7 @@ import {
   resolveStoredSubagentInheritedToolAllowlist,
   resolveStoredSubagentInheritedToolDenylist,
   resolveStoredSubagentCapabilities,
+  resolveStoredSubagentToolConstraints,
   type SessionCapabilityStore,
   type SubagentSessionRole,
 } from "./subagent-capabilities.js";
@@ -170,12 +171,25 @@ export function resolveInheritedToolPolicyForSession(
     cfg,
     store: opts?.store,
   });
-  if (inheritedToolAllow.length === 0 && inheritedToolDeny.length === 0) {
+  const toolConstraints = resolveStoredSubagentToolConstraints(sessionKey, {
+    cfg,
+    store: opts?.store,
+  });
+  // Merge toolConstraints.allowedTools / deniedTools with inherited lists.
+  const effectiveAllow = [
+    ...inheritedToolAllow,
+    ...(toolConstraints?.allowedTools ?? []),
+  ];
+  const effectiveDeny = [
+    ...inheritedToolDeny,
+    ...(toolConstraints?.deniedTools ?? []),
+  ];
+  if (effectiveAllow.length === 0 && effectiveDeny.length === 0) {
     return undefined;
   }
   return {
-    ...(inheritedToolAllow.length > 0 ? { allow: inheritedToolAllow } : {}),
-    ...(inheritedToolDeny.length > 0 ? { deny: inheritedToolDeny } : {}),
+    ...(effectiveAllow.length > 0 ? { allow: effectiveAllow } : {}),
+    ...(effectiveDeny.length > 0 ? { deny: effectiveDeny } : {}),
   };
 }
 

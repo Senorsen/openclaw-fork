@@ -201,6 +201,21 @@ export type SessionGoal = {
   budgetLimitedAt?: number;
 };
 
+/** Constraints applied to subagent tool usage at spawn time. */
+export type SessionToolConstraints = {
+  /** If set, force browser tool to use this profile and block target=node. */
+  browserProfile?: string;
+  /** If set, only these tools are allowed; all others are rejected. */
+  allowedTools?: string[];
+  /** If set, these tools are rejected; all others are allowed. */
+  deniedTools?: string[];
+  /** If set, only these nodes may be accessed; requests to other nodes are rejected. */
+  allowedNodes?: string[];
+  /** If set, these nodes are blocked; requests to other nodes are allowed. */
+  deniedNodes?: string[];
+};
+};
+
 export type SessionEntry = {
   /**
    * Last delivered heartbeat payload (used to suppress duplicate heartbeat notifications).
@@ -246,6 +261,8 @@ export type SessionEntry = {
   inheritedToolDeny?: string[];
   /** Session-scoped tool allow entries inherited from the caller that created this session. */
   inheritedToolAllow?: string[];
+  /** Spawn-time tool constraints (browserProfile, allowedTools, deniedTools, allowedNodes, deniedNodes). */
+  toolConstraints?: SessionToolConstraints;
   /** Plugin id that created this session through api.runtime.subagent. */
   pluginOwnerId?: string;
   systemSent?: boolean;

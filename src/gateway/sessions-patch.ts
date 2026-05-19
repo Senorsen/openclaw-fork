@@ -34,7 +34,7 @@ import {
   normalizeUsageDisplay,
   resolveSupportedThinkingLevel,
 } from "../auto-reply/thinking.js";
-import type { SessionEntry } from "../config/sessions.js";
+import type { SessionEntry, SessionToolConstraints } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeExecTarget } from "../infra/exec-approvals.js";
 import {
@@ -343,6 +343,49 @@ export async function applySessionsPatchToStore(params: {
         next.inheritedToolAllow = inheritedToolAllow;
       } else {
         delete next.inheritedToolAllow;
+      }
+    }
+  }
+
+  if ("toolConstraints" in patch) {
+    const raw = patch.toolConstraints as Record<string, unknown> | null | undefined;
+    if (raw === null) {
+      delete next.toolConstraints;
+    } else if (raw !== undefined && typeof raw === "object") {
+      if (raw.allowedTools && raw.deniedTools) {
+        return invalid("toolConstraints: allowedTools and deniedTools are mutually exclusive");
+      }
+      if (raw.allowedNodes && raw.deniedNodes) {
+        return invalid("toolConstraints: allowedNodes and deniedNodes are mutually exclusive");
+      }
+      const constraints: SessionToolConstraints = {};
+      if (raw.browserProfile) {
+        constraints.browserProfile = String(raw.browserProfile).trim();
+      }
+      if (Array.isArray(raw.allowedTools) && raw.allowedTools.length > 0) {
+        constraints.allowedTools = raw.allowedTools
+          .map((t: string) => String(t).trim())
+          .filter((t: string) => t.length > 0);
+      }
+      if (Array.isArray(raw.deniedTools) && raw.deniedTools.length > 0) {
+        constraints.deniedTools = raw.deniedTools
+          .map((t: string) => String(t).trim())
+          .filter((t: string) => t.length > 0);
+      }
+      if (Array.isArray(raw.allowedNodes) && raw.allowedNodes.length > 0) {
+        constraints.allowedNodes = raw.allowedNodes
+          .map((n: string) => String(n).trim())
+          .filter((n: string) => n.length > 0);
+      }
+      if (Array.isArray(raw.deniedNodes) && raw.deniedNodes.length > 0) {
+        constraints.deniedNodes = raw.deniedNodes
+          .map((n: string) => String(n).trim())
+          .filter((n: string) => n.length > 0);
+      }
+      if (Object.keys(constraints).length > 0) {
+        next.toolConstraints = constraints;
+      } else {
+        delete next.toolConstraints;
       }
     }
   }

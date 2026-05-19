@@ -372,3 +372,23 @@ export function resolveStoredSubagentInheritedToolAllowlist(
   });
   return normalizeInheritedToolAllowlist(entry?.inheritedToolAllow);
 }
+
+export function resolveStoredSubagentToolConstraints(
+  sessionKey: string | undefined | null,
+  opts?: {
+    cfg?: OpenClawConfig;
+    store?: SessionCapabilityStore;
+  },
+): import("../config/sessions/types.js").SessionToolConstraints | undefined {
+  const normalizedSessionKey = normalizeSubagentSessionKey(sessionKey);
+  if (!normalizedSessionKey || !shouldInspectStoredSubagentEnvelope(normalizedSessionKey)) {
+    return undefined;
+  }
+  const store = resolveSubagentCapabilityStore(normalizedSessionKey, opts);
+  const entry = resolveSessionCapabilityEntry({
+    sessionKey: normalizedSessionKey,
+    cfg: opts?.cfg,
+    store,
+  });
+  return (entry as Record<string, unknown>)?.toolConstraints as import("../config/sessions/types.js").SessionToolConstraints | undefined;
+}

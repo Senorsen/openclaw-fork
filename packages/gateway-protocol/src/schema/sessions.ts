@@ -241,6 +241,21 @@ export const SessionsPatchParamsSchema = Type.Object(
     ),
     inheritedToolAllow: Type.Optional(Type.Union([Type.Array(NonEmptyString), Type.Null()])),
     inheritedToolDeny: Type.Optional(Type.Union([Type.Array(NonEmptyString), Type.Null()])),
+    toolConstraints: Type.Optional(
+      Type.Union([
+        Type.Object(
+          {
+            browserProfile: Type.Optional(Type.String()),
+            allowedTools: Type.Optional(Type.Array(Type.String())),
+            deniedTools: Type.Optional(Type.Array(Type.String())),
+            allowedNodes: Type.Optional(Type.Array(Type.String())),
+            deniedNodes: Type.Optional(Type.Array(Type.String())),
+          },
+          { additionalProperties: false },
+        ),
+        Type.Null(),
+      ]),
+    ),
     sendPolicy: Type.Optional(
       Type.Union([Type.Literal("allow"), Type.Literal("deny"), Type.Null()]),
     ),

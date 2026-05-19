@@ -236,6 +236,21 @@ function createSessionsSpawnToolSchema(params: {
           }),
         }
       : {}),
+    browserProfile: Type.Optional(Type.String({
+      description: "Force browser tool to use this profile and block target=node.",
+    })),
+    allowedTools: Type.Optional(Type.Array(Type.String(), {
+      description: "Allowlist of tool names the subagent may use. Mutually exclusive with deniedTools.",
+    })),
+    deniedTools: Type.Optional(Type.Array(Type.String(), {
+      description: "Denylist of tool names the subagent may not use. Mutually exclusive with allowedTools.",
+    })),
+    allowedNodes: Type.Optional(Type.Array(Type.String(), {
+      description: "Allowlist of node names the subagent may access. Mutually exclusive with deniedNodes.",
+    })),
+    deniedNodes: Type.Optional(Type.Array(Type.String(), {
+      description: "Denylist of node names the subagent may not access. Mutually exclusive with allowedNodes.",
+    })),
   };
   return Type.Object(schema);
 }
@@ -490,6 +505,15 @@ export function createSessionsSpawnTool(
             params.attachAs && typeof params.attachAs === "object"
               ? readStringParam(params.attachAs as Record<string, unknown>, "mountPath")
               : undefined,
+          toolConstraints: (() => {
+            const browserProfile = readStringParam(params, "browserProfile");
+            const allowedTools = Array.isArray(params.allowedTools) ? params.allowedTools as string[] : undefined;
+            const deniedTools = Array.isArray(params.deniedTools) ? params.deniedTools as string[] : undefined;
+            const allowedNodes = Array.isArray(params.allowedNodes) ? params.allowedNodes as string[] : undefined;
+            const deniedNodes = Array.isArray(params.deniedNodes) ? params.deniedNodes as string[] : undefined;
+            if (!browserProfile && !allowedTools && !deniedTools && !allowedNodes && !deniedNodes) return undefined;
+            return { browserProfile: browserProfile || undefined, allowedTools, deniedTools, allowedNodes, deniedNodes };
+          })(),
         },
         {
           agentSessionKey: opts?.agentSessionKey,
