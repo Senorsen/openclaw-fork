@@ -1154,7 +1154,7 @@ export async function runReplyAgent(params: {
     }
   };
 
-  if (effectiveShouldSteer && isStreaming) {
+  if (effectiveShouldSteer && isActive) {
     const steerSessionId =
       (sessionKey ? replyRunRegistry.resolveSessionId(sessionKey) : undefined) ??
       followupRun.run.sessionId;
