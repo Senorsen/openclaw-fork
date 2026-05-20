@@ -145,6 +145,25 @@ export function buildInboundMediaNote(ctx: MsgContext): string | undefined {
 
   const transcribedAudioIndices = collectTranscribedAudioAttachmentIndices(ctx, paths.length);
 
+  // Collect all attachment indices where media understanding produced any result
+  // (audio transcription, image description, video description, etc.)
+  const suppressed = new Set<number>();
+  if (Array.isArray(ctx.MediaUnderstandingDecisions)) {
+    for (const decision of ctx.MediaUnderstandingDecisions) {
+      if (decision.outcome !== "success") {
+        continue;
+      }
+      for (const attachment of decision.attachments) {
+        if (
+          attachment.chosen?.outcome === "success" &&
+          isValidAttachmentIndex(attachment.attachmentIndex, paths.length)
+        ) {
+          suppressed.add(attachment.attachmentIndex);
+        }
+      }
+    }
+  }
+
   const urls =
     Array.isArray(ctx.MediaUrls) && ctx.MediaUrls.length === paths.length
       ? ctx.MediaUrls
