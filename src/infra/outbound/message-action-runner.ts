@@ -1234,8 +1234,8 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
       agentId,
       accountId,
       targetPeerId: to,
-      text: message,
-      mediaUrls: mirrorMediaUrls,
+      text: sendPayload.message,
+      mediaUrls: sendPayload.mediaUrls,
     });
   }
 
