@@ -145,6 +145,8 @@ export type SpawnSubagentParams = {
   attachMountPath?: string;
   toolConstraints?: import("../config/sessions/types.js").SessionToolConstraints;
 };
+
+export type SpawnSubagentContext = {
   agentSessionKey?: string;
   /** Separate key used only for completion routing, not sandbox policy. */
   completionOwnerKey?: string;
@@ -277,6 +279,8 @@ function buildDirectChildSessionPatch(patch: Record<string, unknown>): Partial<S
   }
   return entry;
 }
+
+function loadSubagentConfig() {
   return subagentSpawnDeps.getRuntimeConfig();
 }
 
