@@ -214,7 +214,6 @@ export type SessionToolConstraints = {
   /** If set, these nodes are blocked; requests to other nodes are allowed. */
   deniedNodes?: string[];
 };
-};
 
 export type SessionEntry = {
   /**
