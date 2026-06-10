@@ -1666,6 +1666,9 @@ export const dispatchTelegramMessage = async ({
         }
         if (lane.finalized) {
           await stream.stop();
+        } else if (replyAbortController.signal.aborted && stream.lastDeliveredText?.()) {
+          // Steer/interrupt: retain partial message instead of deleting it
+          await stream.stop();
         } else {
           await stream.clear();
         }
