@@ -47,5 +47,4 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/senorsen/openclaw-fork:${{ steps.version.outputs.tag }}
             ${{ env.REGISTRY }}/senorsen/openclaw-fork:custom-latest
-          cache-from: type=gha,scope=build-${{ steps.version.outputs.lock_hash }}
-          cache-to: type=gha,mode=max,scope=build-${{ steps.version.outputs.lock_hash }}
+          no-cache: true
