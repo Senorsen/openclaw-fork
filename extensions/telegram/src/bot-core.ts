@@ -42,9 +42,20 @@ import {
   resolveTelegramOutboundClientTimeoutFloorSeconds,
 } from "./client-fetch.js";
 import { resolveTelegramTransport } from "./fetch.js";
+import {
+  queueAgentHarnessMessage,
+  resolveActiveEmbeddedRunSessionId,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
+import {
+  isBtwRequestText,
+} from "openclaw/plugin-sdk/command-primitives-runtime";
+import {
+  resolveTelegramConversationRoute,
+  resolveTelegramConversationBaseSessionKey,
+} from "./conversation-route.js";
 import { stringifyTelegramRawUpdateForLog } from "./raw-update-log.js";
 import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
-import { getTelegramSequentialKey } from "./sequential-key.js";
+import { getTelegramSequentialKey, isTelegramControlLaneText } from "./sequential-key.js";
 import { createTelegramThreadBindingManager } from "./thread-bindings.js";
 
 export type { TelegramBotOptions } from "./bot.types.js";
@@ -218,6 +229,76 @@ export function createTelegramBotCore(
       updateTracker.finishUpdate(begin.update, { completed: false });
       throw error;
     }
+  });
+
+  // --- Steer bypass: inject messages into active agent runs without waiting for sequentialize ---
+  const steerBypassLogger = createSubsystemLogger("gateway/channels/telegram/steer-bypass");
+  bot.use(async (ctx, next) => {
+    const msg = ctx.message ?? ctx.channelPost;
+    if (!msg) {
+      return next();
+    }
+    const rawText = msg.text ?? msg.caption;
+    const isMediaOnly = !rawText?.trim();
+    const botUsername = ctx.me?.username;
+    // Skip control lane messages (/stop, /status, etc.) — they have their own lane
+    if (rawText && isTelegramControlLaneText({ rawText, botUsername })) {
+      return next();
+    }
+    // Skip /btw messages — they have their own lane
+    if (rawText && isBtwRequestText(rawText, botUsername ? { botUsername } : undefined)) {
+      return next();
+    }
+    const chatId = msg.chat?.id;
+    const senderId = msg.from?.id;
+    if (chatId == null) {
+      return next();
+    }
+    const isGroup = msg.chat?.type === "group" || msg.chat?.type === "supergroup";
+    try {
+      const routeResult = resolveTelegramConversationRoute({
+        cfg,
+        accountId: account.accountId,
+        chatId,
+        isGroup,
+        senderId: senderId ?? null,
+      });
+      const baseSessionKey = resolveTelegramConversationBaseSessionKey({
+        cfg,
+        route: routeResult.route,
+        chatId,
+        isGroup,
+        senderId: senderId ?? null,
+      });
+      const sessionId = resolveActiveEmbeddedRunSessionId(baseSessionKey);
+      if (!sessionId) {
+        return next();
+      }
+      if (isMediaOnly) {
+        // Media messages: inject a steer hint so agent stops, then let media go through
+        // normal pipeline.
+        const mediaType = msg.voice || msg.audio ? "voice/audio" : msg.photo ? "photo" : msg.video ? "video" : msg.document ? "document" : "media";
+        queueAgentHarnessMessage(sessionId,
+          `[User sent a new ${mediaType} message. Stop current work after this tool call and process it.]`,
+        );
+        steerBypassLogger.debug(
+          `steer bypass: injected media hint into active session ${sessionId} (chat=${chatId})`,
+        );
+        return next(); // Let media go through normal pipeline
+      }
+      const queued = queueAgentHarnessMessage(sessionId, rawText!);
+      if (queued) {
+        steerBypassLogger.debug(
+          `steer bypass: injected message into active session ${sessionId} (chat=${chatId})`,
+        );
+        return; // Short-circuit: don't enter sequentialize queue
+      }
+    } catch (err) {
+      steerBypassLogger.debug(
+        `steer bypass: failed for chat=${chatId}: ${String(err)}`,
+      );
+    }
+    return next();
   });
 
   bot.use(botRuntime.sequentialize(getTelegramSequentialKey));
