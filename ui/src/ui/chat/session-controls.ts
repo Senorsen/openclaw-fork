@@ -1654,9 +1654,8 @@ export function resolveSessionOptionGroups(
       continue;
     }
     const isSubagent = isSubagentSessionKey(row.key) || Boolean(row.spawnedBy);
-    if (isSubagent && row.key !== sessionKey) {
-      continue;
-    }
+    // Show subagent sessions in picker (custom patch)
+    void isSubagent;
     addOption(row.key);
   }
   if (byKey.has(sessionKey)) {
