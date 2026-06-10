@@ -43,7 +43,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:custom-latest
+            ${{ env.REGISTRY }}/senorsen/openclaw-fork:${{ steps.version.outputs.tag }}
+            ${{ env.REGISTRY }}/senorsen/openclaw-fork:custom-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
