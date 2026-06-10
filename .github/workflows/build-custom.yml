@@ -30,10 +30,9 @@ jobs:
       - name: Generate version tag
         id: version
         run: |
-          # Count commits on this branch as build number
-          BUILD_NUM=$(git rev-list --count HEAD)
-          echo "tag=2026.5.18-custom.${BUILD_NUM}" >> "$GITHUB_OUTPUT"
-          echo "Building tag: 2026.5.18-custom.${BUILD_NUM}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-6)
+          echo "tag=2026.5.18-custom.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Building tag: 2026.5.18-custom.${SHORT_SHA}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
