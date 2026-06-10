@@ -2022,7 +2022,7 @@ export const dispatchTelegramMessage = async ({
                           if (streamMode !== "progress") {
                             resetProgressDraftState();
                           }
-                          if (answerLane.finalized || answerLane.hasStreamedMessage) {
+                          if (answerLane.finalized || (answerLane.hasStreamedMessage && replyAbortController.signal.aborted)) {
                             await rotateLaneForNewMessage(answerLane);
                           }
                         })
