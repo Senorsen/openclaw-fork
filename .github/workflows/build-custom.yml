@@ -27,6 +27,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate version tag
+        id: version
+        run: |
+          # Count commits on this branch as build number
+          BUILD_NUM=$(git rev-list --count HEAD)
+          echo "tag=2026.5.18-custom.${BUILD_NUM}" >> "$GITHUB_OUTPUT"
+          echo "Building tag: 2026.5.18-custom.${BUILD_NUM}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -36,7 +44,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:custom
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:custom-${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:custom-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
