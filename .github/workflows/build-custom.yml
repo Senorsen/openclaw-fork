@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - '2026.6.5-custom'
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
