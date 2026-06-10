@@ -2022,7 +2022,7 @@ export const dispatchTelegramMessage = async ({
                           if (streamMode !== "progress") {
                             resetProgressDraftState();
                           }
-                          if (answerLane.finalized) {
+                          if (answerLane.finalized || answerLane.hasStreamedMessage) {
                             await rotateLaneForNewMessage(answerLane);
                           }
                         })
@@ -2187,6 +2187,9 @@ export const dispatchTelegramMessage = async ({
           continue;
         }
         if (lane.finalized) {
+          await stream.stop();
+        } else if (replyAbortController.signal.aborted && stream.lastDeliveredText?.()) {
+          // Steer/interrupt: retain partial message instead of deleting it
           await stream.stop();
         } else {
           await stream.clear();
