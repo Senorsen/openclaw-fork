@@ -203,6 +203,7 @@ async function refreshSessionOptions(state: AppViewState) {
     includeUnknown: true,
     showArchived: state.sessionsShowArchived,
     agentId: resolveSessionOptionsAgentId(state),
+    configuredAgentsOnly: false,
   });
 }
 

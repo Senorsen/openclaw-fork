@@ -2755,6 +2755,7 @@ export function renderApp(state: AppViewState) {
                       limit: CHAT_SESSIONS_REFRESH_LIMIT,
                       includeGlobal: true,
                       includeUnknown: true,
+                      configuredAgentsOnly: false,
                     });
                   },
                   onToggleRealtimeTalk: () => state.toggleRealtimeTalk(),
