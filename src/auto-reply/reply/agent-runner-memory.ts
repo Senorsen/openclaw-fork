@@ -272,7 +272,11 @@ export type SessionTranscriptUsageSnapshot = {
 // transcript reads in time to flip memory-flush gating when needed.
 const TRANSCRIPT_OUTPUT_READ_BUFFER_TOKENS = 8192;
 const TRANSCRIPT_TAIL_CHUNK_BYTES = 64 * 1024;
-const FALLBACK_TRANSCRIPT_BYTES_PER_TOKEN = 4;
+// PATCH: increased from 4 to 12 to prevent false compaction triggers.
+// JSONL transcript files contain heavy JSON metadata (tool calls, timestamps,
+// session metadata) that inflate byte size far beyond actual token content.
+// bytes/4 massively overestimates tokens, causing compaction at ~14% context usage.
+const FALLBACK_TRANSCRIPT_BYTES_PER_TOKEN = 12;
 
 function parseUsageFromTranscriptLine(line: string): ReturnType<typeof normalizeUsage> | undefined {
   const trimmed = line.trim();
