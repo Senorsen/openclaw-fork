@@ -49,6 +49,7 @@ import {
   requireRuntimeConfig,
   resolveMarkdownTableMode,
 } from "./send.runtime.js";
+import { mergeTelegramAccountConfig } from "./account-config.js";
 import { recordSentMessage } from "./sent-message-cache.js";
 import { maybePersistResolvedTelegramTarget } from "./target-writeback.js";
 import {
@@ -580,6 +581,59 @@ function createTelegramNonIdempotentRequestWithDiag(params: {
   });
 }
 
+// --- Rich Message helpers (Telegram Bot API 10.1+) ---
+
+function resolveRichMessageMode(
+  cfg: OpenClawConfig,
+  accountId: string,
+): boolean | "auto" {
+  const merged = mergeTelegramAccountConfig(cfg, accountId);
+  return merged.richMessage ?? false;
+}
+
+/** Max text length for Telegram Rich Messages (Bot API 10.1). */
+const RICH_MESSAGE_MAX_CHARS = 32_768;
+
+/**
+ * Split markdown text into chunks for rich message delivery.
+ * Rich messages support up to 32768 chars, much larger than the 4096 limit of regular messages.
+ */
+function splitRichMessageChunks(text: string, limit: number = RICH_MESSAGE_MAX_CHARS): string[] {
+  if (!text) return [];
+  const normalizedLimit = Math.max(1, Math.floor(limit));
+  if (text.length <= normalizedLimit) return [text];
+  // Split on double-newline paragraph boundaries when possible
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > normalizedLimit) {
+    let splitAt = remaining.lastIndexOf("\n\n", normalizedLimit);
+    if (splitAt <= 0) {
+      splitAt = remaining.lastIndexOf("\n", normalizedLimit);
+    }
+    if (splitAt <= 0) {
+      splitAt = normalizedLimit;
+    }
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n+/, "");
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+/**
+ * Check if a Telegram API error indicates that the rich message method is not
+ * supported (e.g. the Bot API server is older than 10.1).
+ */
+function isRichMessageUnsupportedError(err: unknown): boolean {
+  const msg = formatErrorMessage(err);
+  return (
+    /method.*not found/i.test(msg) ||
+    /unknown method/i.test(msg) ||
+    /Bad Request.*unknown/i.test(msg) ||
+    /Not Found/i.test(msg)
+  );
+}
+
 export async function sendMessageTelegram(
   to: string,
   text: string,
@@ -980,6 +1034,77 @@ export async function sendMessageTelegram(
   if (!text || !text.trim()) {
     throw new Error("Message must be non-empty for Telegram sends");
   }
+
+  // Rich message path (Bot API 10.1+): send markdown directly via sendRichMessage.
+  const richMessageMode = resolveRichMessageMode(cfg, account.accountId);
+  if (richMessageMode === true || richMessageMode === "auto") {
+    const richChunks = splitRichMessageChunks(text);
+    const sendRichChunks = async (): Promise<TelegramSendResult> => {
+      let lastMessageId = "";
+      let lastChatId = chatId;
+      for (let i = 0; i < richChunks.length; i++) {
+        const chunk = richChunks[i];
+        if (!chunk?.trim()) continue;
+        // Note: sendRichMessage does not support reply_markup (inline buttons).
+        // When buttons are needed, fall through to the traditional path.
+        const richParams: Record<string, unknown> = {
+          chat_id: chatId,
+          rich_message: { markdown: chunk },
+          ...(opts.silent === true ? { disable_notification: true } : {}),
+          ...threadParams,
+        };
+        // reply_markup is NOT supported by sendRichMessage, so we skip it.
+        const res = await requestWithChatNotFound(
+          () =>
+            (api.raw as Record<string, (...args: unknown[]) => Promise<unknown>>)
+              .sendRichMessage(richParams) as Promise<TelegramMessageLike>,
+          `richMessage${i > 0 ? `-chunk${i + 1}` : ""}`,
+        );
+        const messageId = resolveTelegramMessageIdOrThrow(res, "rich message send");
+        recordSentMessage(chatId, messageId, cfg);
+        lastMessageId = String(messageId);
+        lastChatId = String(res?.chat?.id ?? chatId);
+      }
+      if (lastMessageId) {
+        logTelegramOutboundSendOk({
+          accountId: account.accountId,
+          chatId: String(lastChatId),
+          messageId: lastMessageId,
+          operation: "sendRichMessage",
+          deliveryKind: "richText",
+          messageThreadId: threadParams.message_thread_id,
+          replyToMessageId: opts.replyToMessageId,
+          silent: opts.silent,
+          chunkCount: richChunks.length,
+        });
+      }
+      return { messageId: lastMessageId, chatId: String(lastChatId) };
+    };
+
+    // When buttons are present, sendRichMessage may not support reply_markup.
+    // Fall through to the traditional path in that case.
+    if (!replyMarkup) {
+      try {
+        const result = await sendRichChunks();
+        recordChannelActivity({
+          channel: "telegram",
+          accountId: account.accountId,
+          direction: "outbound",
+        });
+        return result;
+      } catch (err) {
+        if (richMessageMode === "auto" && isRichMessageUnsupportedError(err)) {
+          logVerbose(
+            `telegram: sendRichMessage not supported, falling back to sendMessage: ${formatErrorMessage(err)}`,
+          );
+          // Fall through to traditional HTML path below.
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
   const textResult = await sendChunkedText(text, "text send");
   recordChannelActivity({
     channel: "telegram",
@@ -1391,6 +1516,47 @@ export async function editMessageTelegram(
   });
   const htmlText = renderTelegramHtmlText(text, { textMode, tableMode });
   const plainText = textMode === "html" ? telegramHtmlToPlainTextFallback(htmlText) : text;
+
+  // Rich message edit path: use editMessageText with rich_message parameter.
+  const richMessageMode = resolveRichMessageMode(cfg, account.accountId);
+  if (richMessageMode === true || richMessageMode === "auto") {
+    try {
+      // editMessageText supports a rich_message parameter in Bot API 10.1+.
+      // We pass it alongside the text (which serves as fallback for old clients).
+      const richEditParams: Record<string, unknown> = {
+        rich_message: { markdown: text },
+      };
+      if (opts.linkPreview === false) {
+        richEditParams.link_preview_options = { is_disabled: true };
+      }
+      await requestWithEditShouldLog(
+        () =>
+          (api.raw as Record<string, (...args: unknown[]) => Promise<unknown>>)
+            .editMessageText({
+              chat_id: chatId,
+              message_id: messageId,
+              text: text,
+              ...richEditParams,
+            }) as Promise<unknown>,
+        "editMessage-rich",
+        (err) => !isTelegramMessageNotModifiedError(err),
+      );
+      logVerbose(`[telegram] Edited message ${messageId} in chat ${chatId} (rich)`);
+      return { ok: true as const, messageId: String(messageId), chatId };
+    } catch (err) {
+      if (isTelegramMessageNotModifiedError(err)) {
+        return { ok: true as const, messageId: String(messageId), chatId };
+      }
+      if (richMessageMode === "auto" && isRichMessageUnsupportedError(err)) {
+        logVerbose(
+          `telegram: editMessageText with rich_message not supported, falling back: ${formatErrorMessage(err)}`,
+        );
+        // Fall through to traditional edit path below.
+      } else {
+        throw err;
+      }
+    }
+  }
 
   // Reply markup semantics:
   // - buttons === undefined → don't send reply_markup (keep existing)

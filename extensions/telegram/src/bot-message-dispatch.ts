@@ -440,16 +440,24 @@ export const dispatchTelegramMessage = async ({
     );
     replyFenceGeneration = undefined;
   };
-  const draftMaxChars = Math.min(textLimit, 4096);
+  const richMessageMode = telegramCfg.richMessage ?? false;
+  const useRichMessage = richMessageMode === true || richMessageMode === "auto";
+  const draftMaxChars = useRichMessage ? Math.min(textLimit, 32_768) : Math.min(textLimit, 4096);
   const tableMode = resolveMarkdownTableMode({
     cfg,
     channel: "telegram",
     accountId: route.accountId,
   });
-  const renderStreamText = (text: string) => ({
-    text: renderTelegramHtmlText(text, { tableMode }),
-    parseMode: "HTML" as const,
-  });
+  const renderStreamText = useRichMessage
+    ? (text: string) => ({
+        // In rich message mode, pass markdown as-is (no HTML conversion).
+        text: text,
+        parseMode: undefined as "HTML" | undefined,
+      })
+    : (text: string) => ({
+        text: renderTelegramHtmlText(text, { tableMode }),
+        parseMode: "HTML" as const,
+      });
   const accountBlockStreamingEnabled =
     resolveChannelStreamingBlockEnabled(telegramCfg) ??
     cfg.agents?.defaults?.blockStreamingDefault === "on";
@@ -532,6 +540,7 @@ export const dispatchTelegramMessage = async ({
           replyToMessageId: draftReplyToMessageId,
           minInitialChars: draftMinInitialChars,
           renderText: renderStreamText,
+          richMessage: richMessageMode,
           onSupersededPreview: (superseded) => {
             if (superseded.retain) {
               return;
@@ -1012,6 +1021,15 @@ export const dispatchTelegramMessage = async ({
       return followUp;
     };
     const splitFinalTextForStream = (text: string): string[] => {
+      // Rich message mode: split on markdown paragraph boundaries, not HTML chunks.
+      if (useRichMessage) {
+        const markdownChunks =
+          chunkMode === "newline"
+            ? chunkMarkdownTextWithMode(text, draftMaxChars, chunkMode)
+            : [text];
+        // In rich mode, each chunk is raw markdown (no HTML conversion needed).
+        return markdownChunks;
+      }
       const markdownChunks =
         chunkMode === "newline"
           ? chunkMarkdownTextWithMode(text, draftMaxChars, chunkMode)
