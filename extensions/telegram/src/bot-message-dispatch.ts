@@ -1505,7 +1505,7 @@ export const dispatchTelegramMessage = async ({
                           reasoningStepState.resetForNextStep();
                           streamToolProgressSuppressed = false;
                           streamToolProgressLines = [];
-                          if (answerLane.finalized || answerLane.hasStreamedMessage) {
+                          if (answerLane.finalized || (answerLane.hasStreamedMessage && !activeAnswerDraftIsToolProgressOnly)) {
                             await rotateLaneForNewMessage(answerLane);
                           }
                         })
