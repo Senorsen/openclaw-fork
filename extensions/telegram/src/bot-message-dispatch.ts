@@ -572,7 +572,7 @@ export const dispatchTelegramMessage = async ({
     if (activeAnswerDraftIsToolProgressOnly) {
       return;
     }
-    if (answerLane.hasStreamedMessage) {
+    if (answerLane.finalized) {
       await rotateLaneForNewMessage(answerLane);
     }
     activeAnswerDraftIsToolProgressOnly = true;
