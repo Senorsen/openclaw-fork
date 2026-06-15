@@ -8,7 +8,6 @@ import { buildTelegramThreadParams, type TelegramThreadSpec } from "./bot/helper
 import { isSafeToRetrySendError, isTelegramClientRejection } from "./network-errors.js";
 import { normalizeTelegramReplyToMessageId } from "./outbound-params.js";
 
-const TELEGRAM_STREAM_MAX_CHARS = 4096;
 const TELEGRAM_RICH_STREAM_MAX_CHARS = 32_768;
 const DEFAULT_THROTTLE_MS = 1000;
 
@@ -86,13 +85,10 @@ export function createTelegramDraftStream(params: {
   renderText?: (text: string) => TelegramDraftPreview;
   /** Called when a late send resolves after forceNewMessage() switched generations. */
   onSupersededPreview?: (preview: SupersededTelegramPreview) => void;
-  /** Enable Telegram Rich Message draft streaming (Bot API 10.1+). */
-  richMessage?: boolean | "auto";
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }): TelegramDraftStream {
-  const useRichDraft = params.richMessage === true || params.richMessage === "auto";
-  const effectiveMaxChars = useRichDraft ? TELEGRAM_RICH_STREAM_MAX_CHARS : TELEGRAM_STREAM_MAX_CHARS;
+  const effectiveMaxChars = TELEGRAM_RICH_STREAM_MAX_CHARS;
   const maxChars = Math.min(
     params.maxChars ?? effectiveMaxChars,
     effectiveMaxChars,
@@ -122,8 +118,8 @@ export function createTelegramDraftStream(params: {
   let generation = 0;
   let deliveredTextOffset = 0;
   // Rich draft streaming state
-  let richDraftActive = useRichDraft;
-  let richDraftId = useRichDraft ? Math.trunc(Date.now() % 2_000_000_000) + 1 : 0;
+  let richDraftActive = true;
+  let richDraftId = Math.trunc(Date.now() % 2_000_000_000) + 1;
   let richDraftLastText = "";
   let resetStreamToNewMessage: (options?: { keepPending?: boolean; resetOffset?: boolean }) => void;
   type PreviewSendParams = {

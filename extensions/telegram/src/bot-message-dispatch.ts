@@ -92,7 +92,6 @@ import {
   shouldSuppressTelegramError,
 } from "./error-policy.js";
 import { shouldSuppressLocalTelegramExecApprovalPrompt } from "./exec-approvals.js";
-import { markdownToTelegramChunks, renderTelegramHtmlText } from "./format.js";
 import { beginTelegramInboundEventDeliveryCorrelation } from "./inbound-event-delivery.js";
 import {
   createLaneDeliveryStateTracker,
@@ -440,23 +439,16 @@ export const dispatchTelegramMessage = async ({
     );
     replyFenceGeneration = undefined;
   };
-  const richMessageMode = telegramCfg.richMessage ?? false;
-  const useRichMessage = richMessageMode === true || richMessageMode === "auto";
-  const draftMaxChars = useRichMessage ? Math.min(textLimit, 32_768) : Math.min(textLimit, 4096);
+  const draftMaxChars = Math.min(textLimit, 32_768);
   const tableMode = resolveMarkdownTableMode({
     cfg,
     channel: "telegram",
     accountId: route.accountId,
   });
-  const renderStreamText = useRichMessage
-    ? (text: string) => ({
-        // In rich message mode, pass markdown as-is (no HTML conversion).
+  const renderStreamText = (text: string) => ({
+        // Rich message mode: pass markdown as-is (no HTML conversion).
         text: text,
         parseMode: undefined as "HTML" | undefined,
-      })
-    : (text: string) => ({
-        text: renderTelegramHtmlText(text, { tableMode }),
-        parseMode: "HTML" as const,
       });
   const accountBlockStreamingEnabled =
     resolveChannelStreamingBlockEnabled(telegramCfg) ??
@@ -540,7 +532,6 @@ export const dispatchTelegramMessage = async ({
           replyToMessageId: draftReplyToMessageId,
           minInitialChars: draftMinInitialChars,
           renderText: renderStreamText,
-          richMessage: richMessageMode,
           onSupersededPreview: (superseded) => {
             if (superseded.retain) {
               return;
@@ -1022,23 +1013,12 @@ export const dispatchTelegramMessage = async ({
     };
     const splitFinalTextForStream = (text: string): string[] => {
       // Rich message mode: split on markdown paragraph boundaries, not HTML chunks.
-      if (useRichMessage) {
-        const markdownChunks =
-          chunkMode === "newline"
-            ? chunkMarkdownTextWithMode(text, draftMaxChars, chunkMode)
-            : [text];
-        // In rich mode, each chunk is raw markdown (no HTML conversion needed).
-        return markdownChunks;
-      }
       const markdownChunks =
         chunkMode === "newline"
           ? chunkMarkdownTextWithMode(text, draftMaxChars, chunkMode)
           : [text];
-      return markdownChunks.flatMap((chunk) =>
-        markdownToTelegramChunks(chunk, draftMaxChars, { tableMode }).map(
-          (telegramChunk) => telegramChunk.text,
-        ),
-      );
+      // Each chunk is raw markdown (no HTML conversion needed).
+      return markdownChunks;
     };
     const applyQuoteReplyTarget = (payload: ReplyPayload): ReplyPayload => {
       if (
