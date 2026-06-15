@@ -8,7 +8,7 @@ import { buildTelegramThreadParams, type TelegramThreadSpec } from "./bot/helper
 import { isSafeToRetrySendError, isTelegramClientRejection } from "./network-errors.js";
 import { normalizeTelegramReplyToMessageId } from "./outbound-params.js";
 
-const TELEGRAM_STREAM_MAX_CHARS = 4096;
+const TELEGRAM_RICH_STREAM_MAX_CHARS = 32_768;
 const DEFAULT_THROTTLE_MS = 1000;
 
 export type TelegramDraftStream = {
@@ -88,9 +88,10 @@ export function createTelegramDraftStream(params: {
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }): TelegramDraftStream {
+  const effectiveMaxChars = TELEGRAM_RICH_STREAM_MAX_CHARS;
   const maxChars = Math.min(
-    params.maxChars ?? TELEGRAM_STREAM_MAX_CHARS,
-    TELEGRAM_STREAM_MAX_CHARS,
+    params.maxChars ?? effectiveMaxChars,
+    effectiveMaxChars,
   );
   const throttleMs = Math.max(250, params.throttleMs ?? DEFAULT_THROTTLE_MS);
   const minInitialChars = params.minInitialChars;
@@ -116,6 +117,10 @@ export function createTelegramDraftStream(params: {
   let previewRevision = 0;
   let generation = 0;
   let deliveredTextOffset = 0;
+  // Rich draft streaming state
+  let richDraftActive = true;
+  let richDraftId = Math.trunc(Date.now() % 2_000_000_000) + 1;
+  let richDraftLastText = "";
   let resetStreamToNewMessage: (options?: { keepPending?: boolean; resetOffset?: boolean }) => void;
   type PreviewSendParams = {
     renderedText: string;
@@ -126,6 +131,31 @@ export function createTelegramDraftStream(params: {
     renderedText: string;
     renderedParseMode: "HTML" | undefined;
   }) => {
+    // Rich draft path: use sendRichMessageDraft (no persistent message created).
+    if (richDraftActive) {
+      // sendRichMessageDraft only accepts integer chat_id (private chats).
+      const numericChatId = typeof chatId === "number" ? chatId : Number(chatId);
+      if (!Number.isFinite(numericChatId)) {
+        // Not a private chat — fall back to traditional mode.
+        richDraftActive = false;
+      } else {
+        try {
+          await (params.api.raw as Record<string, (...args: unknown[]) => Promise<unknown>>)
+            .sendRichMessageDraft({
+              chat_id: numericChatId,
+              draft_id: richDraftId,
+              rich_message: { markdown: sendArgs.renderedText },
+            });
+          richDraftLastText = sendArgs.renderedText;
+          // Return a synthetic result — draft messages have no message_id.
+          return { message_id: -1, chat: { id: numericChatId } };
+        } catch (err) {
+          params.warn?.(`telegram rich draft send failed, falling back to traditional: ${formatErrorMessage(err)}`);
+          richDraftActive = false;
+          // Fall through to traditional sendMessage below.
+        }
+      }
+    }
     const sendParams = sendArgs.renderedParseMode
       ? {
           ...replyParams,
@@ -141,14 +171,36 @@ export function createTelegramDraftStream(params: {
   }: PreviewSendParams): Promise<boolean> => {
     if (typeof streamMessageId === "number") {
       streamVisibleSinceMs ??= Date.now();
-      if (renderedParseMode) {
-        await params.api.editMessageText(chatId, streamMessageId, renderedText, {
-          parse_mode: renderedParseMode,
-        });
+      // Rich draft updates: re-send sendRichMessageDraft with same draft_id.
+      if (richDraftActive && streamMessageId === -1) {
+        const numericChatId = typeof chatId === "number" ? chatId : Number(chatId);
+        try {
+          await (params.api.raw as Record<string, (...args: unknown[]) => Promise<unknown>>)
+            .sendRichMessageDraft({
+              chat_id: numericChatId,
+              draft_id: richDraftId,
+              rich_message: { markdown: renderedText },
+            });
+          richDraftLastText = renderedText;
+          return true;
+        } catch (err) {
+          params.warn?.(`telegram rich draft update failed, falling back to traditional: ${formatErrorMessage(err)}`);
+          richDraftActive = false;
+          // Cannot edit -1, need to send a new message. Reset stream.
+          streamMessageId = undefined;
+          messageSendAttempted = false;
+          // Fall through to sendRenderedMessage below.
+        }
       } else {
-        await params.api.editMessageText(chatId, streamMessageId, renderedText);
+        if (renderedParseMode) {
+          await params.api.editMessageText(chatId, streamMessageId, renderedText, {
+            parse_mode: renderedParseMode,
+          });
+        } else {
+          await params.api.editMessageText(chatId, streamMessageId, renderedText);
+        }
+        return true;
       }
-      return true;
     }
     messageSendAttempted = true;
     let sent: Awaited<ReturnType<typeof sendRenderedMessage>>;
@@ -269,11 +321,48 @@ export function createTelegramDraftStream(params: {
     }
   };
 
-  const { loop, update, stop, stopForClear } = createFinalizableDraftStreamControlsForState({
+  const { loop, update, stop: rawStop, stopForClear } = createFinalizableDraftStreamControlsForState({
     throttleMs,
     state: streamState,
     sendOrEditStreamMessage,
   });
+
+  // Persist rich draft as a permanent message via sendRichMessage after streaming stops.
+  const persistRichDraft = async (): Promise<void> => {
+    if (!richDraftActive || streamMessageId !== -1 || !richDraftLastText) {
+      return;
+    }
+    const numericChatId = typeof chatId === "number" ? chatId : Number(chatId);
+    if (!Number.isFinite(numericChatId)) {
+      return;
+    }
+    try {
+      const res = await (params.api.raw as Record<string, (...args: unknown[]) => Promise<unknown>>)
+        .sendRichMessage({
+          chat_id: numericChatId,
+          rich_message: { markdown: richDraftLastText },
+          ...replyParams,
+        }) as { message_id?: number; chat?: { id: number } };
+      const messageId = res?.message_id;
+      if (typeof messageId === "number" && Number.isFinite(messageId)) {
+        streamMessageId = Math.trunc(messageId);
+        streamVisibleSinceMs ??= Date.now();
+        params.log?.(`telegram rich draft persisted as message ${streamMessageId}`);
+      } else {
+        params.warn?.("telegram rich draft persist: missing message_id in response");
+        streamMessageId = undefined; // Let upper layer fall through to sendPayload.
+      }
+    } catch (err) {
+      params.warn?.(`telegram rich draft persist failed, falling back to traditional: ${formatErrorMessage(err)}`);
+      streamMessageId = undefined; // Let upper layer fall through to sendPayload.
+    }
+  };
+
+  // Wrapped stop: after the final flush, persist the rich draft.
+  const stop = async () => {
+    await rawStop();
+    await persistRichDraft();
+  };
 
   resetStreamToNewMessage = (options) => {
     streamState.stopped = false;
@@ -284,6 +373,10 @@ export function createTelegramDraftStream(params: {
     streamVisibleSinceMs = undefined;
     lastSentText = "";
     lastSentParseMode = undefined;
+    if (richDraftActive) {
+      richDraftId = Math.trunc(Date.now() % 2_000_000_000) + 1;
+      richDraftLastText = "";
+    }
     if (options?.resetOffset !== false) {
       deliveredTextOffset = 0;
     }
@@ -294,6 +387,13 @@ export function createTelegramDraftStream(params: {
   };
 
   const clear = async () => {
+    // Rich drafts expire automatically (30s), no deleteMessage needed.
+    if (richDraftActive && streamMessageId === -1) {
+      await stopForClear();
+      streamMessageId = undefined;
+      richDraftLastText = "";
+      return;
+    }
     const messageId = await takeMessageIdAfterStop({
       stopForClear,
       readMessageId: () => streamMessageId,
