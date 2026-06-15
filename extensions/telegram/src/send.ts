@@ -611,19 +611,6 @@ function splitRichMessageChunks(text: string, limit: number = RICH_MESSAGE_MAX_C
   return chunks;
 }
 
-/**
- * Check if a Telegram API error indicates that the rich message method is not
- * supported (e.g. the Bot API server is older than 10.1).
- */
-function isRichMessageUnsupportedError(err: unknown): boolean {
-  const msg = formatErrorMessage(err);
-  return (
-    /method.*not found/i.test(msg) ||
-    /unknown method/i.test(msg) ||
-    /Bad Request.*unknown/i.test(msg) ||
-    /Not Found/i.test(msg)
-  );
-}
 
 export async function sendMessageTelegram(
   to: string,
@@ -1079,14 +1066,10 @@ export async function sendMessageTelegram(
       });
       return result;
     } catch (err) {
-      if (isRichMessageUnsupportedError(err)) {
-        logVerbose(
-          `telegram: sendRichMessage not supported, falling back to sendMessage: ${formatErrorMessage(err)}`,
-        );
-        // Fall through to traditional HTML path below.
-      } else {
-        throw err;
-      }
+      logVerbose(
+        `telegram: sendRichMessage failed, falling back to sendMessage: ${formatErrorMessage(err)}`,
+      );
+      // Fall through to traditional HTML path below — never throw, never delete.
     }
   }
 
@@ -1529,14 +1512,10 @@ export async function editMessageTelegram(
     if (isTelegramMessageNotModifiedError(err)) {
       return { ok: true as const, messageId: String(messageId), chatId };
     }
-    if (isRichMessageUnsupportedError(err)) {
-      logVerbose(
-        `telegram: editMessageText with rich_message not supported, falling back: ${formatErrorMessage(err)}`,
-      );
-      // Fall through to traditional edit path below.
-    } else {
-      throw err;
-    }
+    logVerbose(
+      `telegram: editMessageText with rich_message failed, falling back: ${formatErrorMessage(err)}`,
+    );
+    // Fall through to traditional edit path below — never throw, never delete.
   }
 
   // Reply markup semantics:
