@@ -742,6 +742,8 @@ export function createOpenClawCodingTools(options?: {
     throw new Error("Sandbox filesystem bridge is unavailable.");
   }
   const imageSanitization = resolveImageSanitizationLimits(options?.config);
+  // Default gateway call options for node file operations (uses local gateway)
+  const nodeFileGatewayOpts = {};
   options?.recordToolPrepStage?.("workspace-policy");
 
   const base: AnyAgentTool[] = [];
@@ -769,6 +771,7 @@ export function createOpenClawCodingTools(options?: {
         const wrapped = createOpenClawReadTool(freshReadTool, {
           modelContextWindowTokens: options?.modelContextWindowTokens,
           imageSanitization,
+          gatewayOpts: nodeFileGatewayOpts,
         });
         base.push(
           workspaceOnly
@@ -786,7 +789,7 @@ export function createOpenClawCodingTools(options?: {
         if (sandboxRoot) {
           continue;
         }
-        const wrapped = createHostWorkspaceWriteTool(codingRoot, { workspaceOnly });
+        const wrapped = createHostWorkspaceWriteTool(codingRoot, { workspaceOnly, gatewayOpts: nodeFileGatewayOpts });
         base.push(workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, codingRoot) : wrapped);
         continue;
       }
@@ -794,7 +797,7 @@ export function createOpenClawCodingTools(options?: {
         if (sandboxRoot) {
           continue;
         }
-        const wrapped = createHostWorkspaceEditTool(codingRoot, { workspaceOnly });
+        const wrapped = createHostWorkspaceEditTool(codingRoot, { workspaceOnly, gatewayOpts: nodeFileGatewayOpts });
         base.push(workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, codingRoot) : wrapped);
         continue;
       }
