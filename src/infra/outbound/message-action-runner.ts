@@ -77,6 +77,7 @@ import {
 import { maybeApplyTtsToMessageActionSendPayload } from "./message-action-tts.js";
 import { resolveOutboundMessageGatewayOptions } from "./message-gateway-options.js";
 import type { MessagePollResult, MessageSendResult } from "./message.js";
+import { maybeCrossSessionInject } from "./cross-session-inject.js";
 import {
   applyCrossContextDecoration,
   buildCrossContextDecoration,
@@ -1179,6 +1180,21 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
     replyToId: resolvedReplyToId ?? undefined,
     threadId: resolvedThreadId ?? undefined,
   });
+
+  // Cross-session injection: record the outbound message in the target peer's
+  // session transcript so the agent has context when the target replies.
+  if (agentId && !dryRun) {
+    void maybeCrossSessionInject({
+      cfg,
+      channel,
+      agentId,
+      accountId,
+      targetPeerId: to,
+      text: sendPayload.message,
+      mediaUrls: sendPayload.mediaUrls,
+      sourceSessionKey: input.sessionKey,
+    });
+  }
 
   return {
     kind: "send",
