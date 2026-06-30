@@ -1,9 +1,12 @@
 import { completionRequiresMessageToolDelivery } from "../auto-reply/reply/completion-delivery-policy.js";
+import { getLoadedChannelPluginForRead } from "../channels/plugins/registry-loaded-read.js";
+import type { ChannelId } from "../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ConversationRef } from "../infra/outbound/session-binding-service.js";
 import { stringifyRouteThreadId } from "../plugin-sdk/channel-route.js";
 import { normalizeAccountId } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
+import { deriveSessionChatTypeFromKey } from "../sessions/session-chat-type-shared.js";
 import { isCronSessionKey } from "../sessions/session-key-utils.js";
 import { isNonTerminalAgentRunStatus } from "../shared/agent-run-status.js";
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
@@ -523,6 +526,57 @@ function requiresAgentMediatedCompletionDelivery(params: {
   );
 }
 
+// Infer whether a resolved delivery target addresses a direct (1:1) chat,
+// a group, or a channel. Used to gate the deterministic message-tool-only
+// route for direct-message subagent completions.
+function inferDeliveryTargetChatType(target: {
+  channel?: string;
+  to?: string;
+}): "direct" | "group" | "channel" | undefined {
+  const normalizedTo = normalizeOptionalLowercaseString(target.to);
+  if (!normalizedTo) {
+    return undefined;
+  }
+  if (
+    normalizedTo.startsWith("dm:") ||
+    normalizedTo.startsWith("direct:") ||
+    normalizedTo.startsWith("user:") ||
+    normalizedTo.includes(":dm:") ||
+    normalizedTo.includes(":direct:")
+  ) {
+    return "direct";
+  }
+  if (normalizedTo.startsWith("channel:") || normalizedTo.startsWith("thread:")) {
+    return "channel";
+  }
+  if (normalizedTo.startsWith("group:")) {
+    return "group";
+  }
+  const channel = normalizeMessageChannel(target.channel);
+  return channel
+    ? getLoadedChannelPluginForRead(channel as ChannelId)?.messaging?.inferTargetChatType?.({
+        to: target.to ?? "",
+      })
+    : undefined;
+}
+
+// True when the completion is being delivered to a direct (1:1) conversation.
+// Threaded targets are never treated as direct. Falls back to the requester
+// session key's chat type when the target shape is ambiguous.
+function isDirectMessageDeliveryTarget(
+  target: { channel?: string; to?: string; threadId?: string },
+  requesterSessionKey: string,
+): boolean {
+  if (target.threadId) {
+    return false;
+  }
+  const targetChatType = inferDeliveryTargetChatType(target);
+  if (targetChatType) {
+    return targetChatType === "direct";
+  }
+  return deriveSessionChatTypeFromKey(requesterSessionKey) === "direct";
+}
+
 function hasGatewayAgentMessagingToolDelivery(response: unknown): boolean {
   const result = getGatewayAgentResult(response);
   return Boolean(result && hasMessagingToolDeliveryEvidence(result));
@@ -655,12 +709,17 @@ async function sendSubagentAnnounceDirectly(params: {
       isGatewayMessageChannel(normalizedSessionOnlyOriginChannel)
         ? normalizedSessionOnlyOriginChannel
         : undefined;
+    const sourceToolId =
+      normalizeOptionalLowercaseString(params.sourceTool) ??
+      (params.expectsCompletionMessage ? "subagent_announce" : "");
+    const isSubagentCompletion = sourceToolId === "subagent_announce";
     const agentMediatedCompletion = requiresAgentMediatedCompletionDelivery({
       expectsCompletionMessage: params.expectsCompletionMessage,
-      sourceTool: params.sourceTool,
+      sourceTool: sourceToolId,
     });
     const expectedMediaUrls = collectExpectedMediaFromInternalEvents(params.internalEvents);
-    const requiresMessageToolDelivery =
+    // Chat-type / media policy route (group/channel or generated media present).
+    const completionRouteRequiresMessageToolDelivery =
       agentMediatedCompletion &&
       (expectedMediaUrls.length > 0 ||
         completionRequiresMessageToolDelivery({
@@ -671,6 +730,19 @@ async function sendSubagentAnnounceDirectly(params: {
           directOrigin: effectiveDirectOrigin,
           requesterSessionOrigin,
         }));
+    // Deterministic mutual-exclusion route: a direct-message subagent completion
+    // is always delivered by the awakened parent via the message tool, never by
+    // the runtime's automatic final delivery. This makes the "runtime delivers"
+    // and "agent sends" paths structurally exclusive, so a DM completion can no
+    // longer be double-sent.
+    const subagentDirectMessageCompletionRequiresMessageTool =
+      params.expectsCompletionMessage &&
+      isSubagentCompletion &&
+      deliveryTarget.deliver &&
+      isDirectMessageDeliveryTarget(deliveryTarget, canonicalRequesterSessionKey);
+    const requiresMessageToolDelivery =
+      completionRouteRequiresMessageToolDelivery ||
+      subagentDirectMessageCompletionRequiresMessageTool;
     const completionSourceReplyDeliveryMode = requiresMessageToolDelivery
       ? "message_tool_only"
       : undefined;
