@@ -3,6 +3,7 @@
  * Adds workspace-root guards, adaptive read paging, image validation, memory
  * append-only writes, and parameter cleanup around the session file tools.
  */
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { URL } from "node:url";
@@ -39,6 +40,8 @@ import { assertSandboxPath } from "./sandbox-paths.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import { createEditTool, createReadTool, createWriteTool } from "./sessions/index.js";
 import { sanitizeToolResultImages } from "./tool-images.js";
+import { callGatewayTool, type GatewayCallOptions } from "./tools/gateway.js";
+import { resolveNodeId } from "./tools/nodes-utils.js";
 
 export {
   REQUIRED_PARAM_GROUPS,
@@ -62,6 +65,12 @@ const MAX_ADAPTIVE_READ_PAGES = 4;
 type OpenClawReadToolOptions = {
   modelContextWindowTokens?: number;
   imageSanitization?: ImageSanitizationLimits;
+  /** Gateway call options for node file operations. */
+  gatewayOpts?: GatewayCallOptions;
+};
+
+export type NodeFileOpsContext = {
+  gatewayOpts: GatewayCallOptions;
 };
 
 type ReadTruncationDetails = {
@@ -861,20 +870,104 @@ export function createSandboxedEditTool(params: SandboxToolParams) {
   return wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.edit);
 }
 
+/**
+ * Inject an optional `node` parameter into a tool schema.
+ * When the agent supplies `node`, the tool routes the operation to that remote node.
+ */
+function injectNodeParam(tool: AnyAgentTool): AnyAgentTool {
+  const schema =
+    tool.parameters && typeof tool.parameters === "object"
+      ? (tool.parameters as Record<string, unknown>)
+      : undefined;
+  if (!schema || !schema.properties || typeof schema.properties !== "object") {
+    return tool;
+  }
+  const properties = { ...(schema.properties as Record<string, unknown>) };
+  if ("node" in properties) {
+    return tool; // already has a node param
+  }
+  properties.node = {
+    type: "string",
+    description: "Node name to operate on. Omit for local files.",
+  };
+  return {
+    ...tool,
+    parameters: {
+      ...schema,
+      properties,
+    },
+  };
+}
+
 /** Create a host workspace write tool using guarded filesystem operations. */
-export function createHostWorkspaceWriteTool(root: string, options?: { workspaceOnly?: boolean }) {
+export function createHostWorkspaceWriteTool(
+  root: string,
+  options?: { workspaceOnly?: boolean; gatewayOpts?: GatewayCallOptions },
+) {
   const base = createWriteTool(root, {
     operations: createHostWriteOperations(root, options),
   }) as unknown as AnyAgentTool;
-  return wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.write);
+  const validated = wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.write);
+  const withNodeParam = injectNodeParam(validated);
+  if (!options?.gatewayOpts) {
+    return withNodeParam;
+  }
+  const gatewayOpts = options.gatewayOpts;
+  return {
+    ...withNodeParam,
+    execute: async (
+      toolCallId: string,
+      params: unknown,
+      signal?: AbortSignal,
+      onUpdate?: (result: AgentToolResult<unknown>) => void,
+    ) => {
+      const record =
+        params && typeof params === "object" ? (params as Record<string, unknown>) : undefined;
+      const nodeName = typeof record?.node === "string" ? record.node.trim() : "";
+      if (nodeName) {
+        const filePath = typeof record?.path === "string" ? String(record.path) : "";
+        const content = typeof record?.content === "string" ? String(record.content) : "";
+        return executeNodeWrite(gatewayOpts, nodeName, { path: filePath, content });
+      }
+      return validated.execute(toolCallId, params, signal, onUpdate);
+    },
+  };
 }
 
 /** Create a host workspace edit tool using guarded filesystem operations. */
-export function createHostWorkspaceEditTool(root: string, options?: { workspaceOnly?: boolean }) {
+export function createHostWorkspaceEditTool(
+  root: string,
+  options?: { workspaceOnly?: boolean; gatewayOpts?: GatewayCallOptions },
+) {
   const base = createEditTool(root, {
     operations: createHostEditOperations(root, options),
   }) as unknown as AnyAgentTool;
-  return wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.edit);
+  const validated = wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.edit);
+  const withNodeParam = injectNodeParam(validated);
+  if (!options?.gatewayOpts) {
+    return withNodeParam;
+  }
+  const gatewayOpts = options.gatewayOpts;
+  return {
+    ...withNodeParam,
+    execute: async (
+      toolCallId: string,
+      params: unknown,
+      signal?: AbortSignal,
+      onUpdate?: (result: AgentToolResult<unknown>) => void,
+    ) => {
+      const record =
+        params && typeof params === "object" ? (params as Record<string, unknown>) : undefined;
+      const nodeName = typeof record?.node === "string" ? record.node.trim() : "";
+      if (nodeName) {
+        const filePath = typeof record?.path === "string" ? String(record.path) : "";
+        const oldText = typeof record?.oldText === "string" ? String(record.oldText) : "";
+        const newText = typeof record?.newText === "string" ? String(record.newText) : "";
+        return executeNodeEdit(gatewayOpts, nodeName, { path: filePath, oldText, newText });
+      }
+      return validated.execute(toolCallId, params, signal, onUpdate);
+    },
+  };
 }
 
 /** Wrap the base read tool with OpenClaw paging, MIME, and image handling. */
@@ -882,14 +975,27 @@ export function createOpenClawReadTool(
   base: AnyAgentTool,
   options?: OpenClawReadToolOptions,
 ): AnyAgentTool {
+  const withNodeParam = injectNodeParam(base);
   return {
-    ...base,
+    ...withNodeParam,
     execute: async (toolCallId, params, signal) => {
       const record = getToolParamsRecord(params);
       const normalizedRecord = record
         ? normalizeFileToolPathParamsFromKeys(record, ["path"])
         : undefined;
       assertRequiredParams(normalizedRecord, REQUIRED_PARAM_GROUPS.read, base.name);
+
+      // Check for node parameter — if present, route to node RPC
+      const nodeName = typeof normalizedRecord?.node === "string" ? (normalizedRecord.node as string).trim() : "";
+      if (nodeName && options?.gatewayOpts) {
+        const filePath = typeof normalizedRecord?.path === "string" ? String(normalizedRecord.path) : "";
+        return executeNodeRead(options.gatewayOpts, nodeName, {
+          path: filePath,
+          offset: typeof normalizedRecord?.offset === "number" ? normalizedRecord.offset as number : undefined,
+          limit: typeof normalizedRecord?.limit === "number" ? normalizedRecord.limit as number : undefined,
+        });
+      }
+
       const result = await executeReadWithAdaptivePaging({
         base,
         toolCallId,
@@ -1127,4 +1233,101 @@ function createFsAccessError(code: string, filePath: string): NodeJS.ErrnoExcept
   const error = new Error(`Sandbox FS error (${code}): ${filePath}`) as NodeJS.ErrnoException;
   error.code = code;
   return error;
+}
+
+// ── Node file operations ──────────────────────────────────────────
+
+async function invokeNodeFileCommand<T = unknown>(
+  gatewayOpts: GatewayCallOptions,
+  nodeName: string,
+  command: string,
+  commandParams: Record<string, unknown>,
+): Promise<T> {
+  const nodeId = await resolveNodeId(gatewayOpts, nodeName);
+  const raw = await callGatewayTool<{ payload: T }>(
+    "node.invoke",
+    { ...gatewayOpts, timeoutMs: gatewayOpts.timeoutMs ?? 60_000 },
+    {
+      nodeId,
+      command,
+      params: commandParams,
+      idempotencyKey: crypto.randomUUID(),
+    },
+  );
+  return (raw?.payload ?? {}) as T;
+}
+
+type NodeReadResult = {
+  content: string;
+  encoding: "utf8" | "base64";
+  size: number;
+  totalLines?: number;
+};
+
+type NodeWriteResult = {
+  ok: boolean;
+};
+
+export async function executeNodeRead(
+  gatewayOpts: GatewayCallOptions,
+  nodeName: string,
+  params: { path: string; offset?: number; limit?: number },
+): Promise<AgentToolResult<unknown>> {
+  const result = await invokeNodeFileCommand<NodeReadResult>(
+    gatewayOpts,
+    nodeName,
+    "file.read",
+    params,
+  );
+  if (result.encoding === "base64") {
+    return {
+      content: [
+        { type: "text", text: `Read binary file [base64, ${result.size} bytes]: ${params.path}` },
+      ],
+    } as AgentToolResult<unknown>;
+  }
+  let text = result.content;
+  if (result.totalLines) {
+    const offset = params.offset ?? 1;
+    const lines = text.split("\n");
+    text = `File: ${params.path} (${result.size} bytes, ${result.totalLines} lines)\n${text}`;
+    if (offset + lines.length - 1 < result.totalLines) {
+      text += `\n\n[Showing lines ${offset}-${offset + lines.length - 1} of ${result.totalLines}. Use offset=${offset + lines.length} to continue.]`;
+    }
+  }
+  return {
+    content: [{ type: "text", text }],
+  } as AgentToolResult<unknown>;
+}
+
+export async function executeNodeWrite(
+  gatewayOpts: GatewayCallOptions,
+  nodeName: string,
+  params: { path: string; content: string },
+): Promise<AgentToolResult<unknown>> {
+  await invokeNodeFileCommand<NodeWriteResult>(
+    gatewayOpts,
+    nodeName,
+    "file.write",
+    params,
+  );
+  return {
+    content: [{ type: "text", text: `Successfully wrote to ${params.path} on node ${nodeName}` }],
+  } as AgentToolResult<unknown>;
+}
+
+export async function executeNodeEdit(
+  gatewayOpts: GatewayCallOptions,
+  nodeName: string,
+  params: { path: string; oldText: string; newText: string },
+): Promise<AgentToolResult<unknown>> {
+  await invokeNodeFileCommand<NodeWriteResult>(
+    gatewayOpts,
+    nodeName,
+    "file.edit",
+    params,
+  );
+  return {
+    content: [{ type: "text", text: `Successfully edited ${params.path} on node ${nodeName}` }],
+  } as AgentToolResult<unknown>;
 }
