@@ -1027,6 +1027,7 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
       targetPeerId: to,
       text: sendPayload.message,
       mediaUrls: sendPayload.mediaUrls,
+      sourceSessionKey: input.sessionKey,
     });
   }
 

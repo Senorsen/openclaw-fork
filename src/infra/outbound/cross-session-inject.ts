@@ -30,6 +30,13 @@ export type CrossSessionInjectParams = {
   text?: string;
   /** Media URLs included in the outbound message. */
   mediaUrls?: string[];
+  /**
+   * The session key of the *current* (source) session emitting this outbound
+   * message. When the resolved target session key equals this, the target is
+   * the agent's own session (e.g. DMing yourself), so the inject is skipped to
+   * avoid double-writing the message into the same transcript.
+   */
+  sourceSessionKey?: string | null;
 };
 
 /**
@@ -56,7 +63,8 @@ export type CrossSessionInjectParams = {
 export async function maybeCrossSessionInject(
   params: CrossSessionInjectParams,
 ): Promise<{ injected: boolean; reason?: string }> {
-  const { cfg, channel, agentId, accountId, targetPeerId, text, mediaUrls } = params;
+  const { cfg, channel, agentId, accountId, targetPeerId, text, mediaUrls, sourceSessionKey } =
+    params;
 
   if (!cfg.session?.injectOutboundToTargetSession) {
     return { injected: false, reason: "disabled" };
@@ -79,6 +87,18 @@ export async function maybeCrossSessionInject(
     peerKind: "direct",
     dmScope,
   });
+
+  // Skip self-targeting: if the resolved target session is the same as the
+  // current (source) session (e.g. the agent DMing itself), the outbound text
+  // is already recorded in this transcript via the normal send path. Injecting
+  // again would double-write the same message.
+  if (sourceSessionKey && sourceSessionKey.trim() === targetSessionKey) {
+    log.debug("cross-session inject skipped (target is current session)", {
+      channel,
+      targetSessionKey,
+    });
+    return { injected: false, reason: "self-target" };
+  }
 
   try {
     const result = await appendAssistantMessageToSessionTranscript({
