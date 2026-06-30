@@ -38,7 +38,8 @@ type ForkSourceTranscript = {
   labelsToWrite: Array<{ targetId: string; label: string; timestamp: string }>;
 };
 
-const FALLBACK_TRANSCRIPT_BYTES_PER_TOKEN = 4;
+// PATCH: increased from 4 to 12 (same as agent-runner-memory.ts)
+const FALLBACK_TRANSCRIPT_BYTES_PER_TOKEN = 12;
 
 function resolvePositiveTokenCount(value: number | undefined): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0
