@@ -17,6 +17,31 @@ export function resolveTimezone(value: string): string | undefined {
   }
 }
 
+/** Maps Intl's "en-US" `weekday: "short"` abbreviations to Chinese short weekday labels. */
+const WEEKDAY_SHORT_EN_TO_ZH: Record<string, string> = {
+  Mon: "周一",
+  Tue: "周二",
+  Wed: "周三",
+  Thu: "周四",
+  Fri: "周五",
+  Sat: "周六",
+  Sun: "周日",
+};
+
+/**
+ * Looks up the Chinese short weekday label (周一..周日) for an English short
+ * weekday abbreviation (Mon..Sun) produced by `Intl.DateTimeFormat("en-US", {
+ * weekday: "short" })`. Avoids a second Intl.DateTimeFormat call when the
+ * English weekday has already been computed.
+ *
+ * Returns undefined for unrecognized input instead of throwing, so callers
+ * can fail open (omit the Chinese suffix) rather than fail the whole
+ * timestamp format.
+ */
+export function weekdayShortEnToZh(weekdayShortEn: string | undefined): string | undefined {
+  return weekdayShortEn ? WEEKDAY_SHORT_EN_TO_ZH[weekdayShortEn] : undefined;
+}
+
 type FormatTimestampOptions = {
   /** Include seconds in the output. Default: false */
   displaySeconds?: boolean;

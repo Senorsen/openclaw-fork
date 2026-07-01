@@ -22,7 +22,7 @@ describe("formatAgentEnvelope", () => {
         body: "hello",
       });
 
-      expect(body).toBe("[WebChat user1 mac-mini 10.0.0.5 Thu 2025-01-02T03:04:05Z] hello");
+      expect(body).toBe("[WebChat user1 mac-mini 10.0.0.5 Thu 2025-01-02T03:04:05Z（周四）] hello");
     });
   });
 
@@ -48,7 +48,7 @@ describe("formatAgentEnvelope", () => {
         body: "hello",
       });
 
-      expect(body).toBe("[WebChat Thu 2025-01-02T03:04:05Z] hello");
+      expect(body).toBe("[WebChat Thu 2025-01-02T03:04:05Z（周四）] hello");
     });
   });
 

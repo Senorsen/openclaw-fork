@@ -4,6 +4,7 @@
 import {
   formatUtcTimestamp,
   formatZonedTimestamp,
+  weekdayShortEnToZh,
 } from "../../infra/format-time/format-datetime.js";
 
 export { escapeRegExp } from "../../utils.js";
@@ -28,21 +29,27 @@ export function formatEnvelopeTimestamp(date: Date, zone: EnvelopeTimestampZone 
       return undefined;
     }
   })();
+  // Mirrors the Chinese weekday suffix added by src/auto-reply/envelope.ts's
+  // formatEnvelopeTimestamp, so tests asserting against this helper's output
+  // stay in sync with the real implementation.
+  const weekdayZh = weekdayShortEnToZh(weekday);
+  const withWeekdayZh = (base: string): string =>
+    weekdayZh ? `${base}（${weekdayZh}）` : base;
 
   if (normalized === "utc" || normalized === "gmt") {
     const ts = formatUtcTimestamp(date, { displaySeconds: true });
-    return weekday ? `${weekday} ${ts}` : ts;
+    return withWeekdayZh(weekday ? `${weekday} ${ts}` : ts);
   }
   if (normalized === "local" || normalized === "host") {
     const ts =
       formatZonedTimestamp(date, { displaySeconds: true }) ??
       formatUtcTimestamp(date, { displaySeconds: true });
-    return weekday ? `${weekday} ${ts}` : ts;
+    return withWeekdayZh(weekday ? `${weekday} ${ts}` : ts);
   }
   const ts =
     formatZonedTimestamp(date, { timeZone: trimmedZone, displaySeconds: true }) ??
     formatUtcTimestamp(date, { displaySeconds: true });
-  return weekday ? `${weekday} ${ts}` : ts;
+  return withWeekdayZh(weekday ? `${weekday} ${ts}` : ts);
 }
 
 export function formatLocalEnvelopeTimestamp(date: Date): string {

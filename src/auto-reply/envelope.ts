@@ -11,6 +11,7 @@ import {
   resolveTimezone,
   formatUtcTimestamp,
   formatZonedTimestamp,
+  weekdayShortEnToZh,
 } from "../infra/format-time/format-datetime.ts";
 import { formatTimeAgo } from "../infra/format-time/format-relative.ts";
 
@@ -143,6 +144,12 @@ export function formatEnvelopeTimestamp(
       return undefined;
     }
   })();
+  // Also append a Chinese weekday (周一..周日) in parentheses. Some models are still
+  // unreliable deriving DOW purely from the English abbreviation, and Sen's
+  // primary language is Chinese, so pairing both forms reduces DOW mistakes.
+  // Looked up from the already-computed English short weekday instead of a
+  // second Intl.DateTimeFormat call.
+  const weekdayZh = weekdayShortEnToZh(weekday);
 
   const formatted =
     zone.mode === "utc"
@@ -154,7 +161,8 @@ export function formatEnvelopeTimestamp(
   if (!formatted) {
     return undefined;
   }
-  return weekday ? `${weekday} ${formatted}` : formatted;
+  const withWeekday = weekday ? `${weekday} ${formatted}` : formatted;
+  return weekdayZh ? `${withWeekday}（${weekdayZh}）` : withWeekday;
 }
 
 function resolveDirectEnvelopeBodyLabel(from: string | undefined): string {
