@@ -181,6 +181,7 @@ export type SpawnSubagentParams = {
     mimeType?: string;
   }>;
   attachMountPath?: string;
+  toolConstraints?: import("../config/sessions/types.js").SessionToolConstraints;
 };
 
 export type SpawnSubagentContext = {
@@ -332,6 +333,9 @@ function buildDirectChildSessionPatch(patch: Record<string, unknown>): Partial<S
   const inheritedToolAllow = normalizeInheritedToolAllowlist(patch.inheritedToolAllow);
   if (inheritedToolAllow.length > 0) {
     entry.inheritedToolAllow = inheritedToolAllow;
+  }
+  if (patch.toolConstraints && typeof patch.toolConstraints === "object") {
+    entry.toolConstraints = patch.toolConstraints as SessionEntry["toolConstraints"];
   }
   if (typeof patch.thinkingLevel === "string" && patch.thinkingLevel.trim()) {
     entry.thinkingLevel = patch.thinkingLevel.trim();
@@ -1331,6 +1335,7 @@ export async function spawnSubagentDirect(
     subagentControlScope: childCapabilities.controlScope,
     ...inheritedToolAllowPatch(ctx.inheritedToolAllowlist),
     ...inheritedToolDenyPatch(ctx.inheritedToolDenylist),
+    ...(params.toolConstraints ? { toolConstraints: params.toolConstraints } : {}),
     ...plan.initialSessionPatch,
   };
 

@@ -1113,6 +1113,75 @@ export async function runBeforeToolCallHook(args: {
     }
   }
 
+  // --- toolConstraints: browserProfile / allowedNodes / deniedNodes enforcement ---
+  // Port of e722e098d7 adapted to 6.11's agent-tools naming.
+  if (args.ctx?.sessionKey) {
+    const { resolveStoredSubagentToolConstraints } = await import("./subagent-capabilities.js");
+    const constraints = resolveStoredSubagentToolConstraints(args.ctx.sessionKey);
+    if (constraints) {
+      const p = isPlainObject(params) ? (params as Record<string, unknown>) : {};
+      const normalizedName = toolName.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+
+      // browserProfile enforcement: override profile param and block target=node for browser
+      if (constraints.browserProfile && normalizedName === "browser") {
+        if (p.target === "node") {
+          return {
+            blocked: true,
+            kind: "veto",
+            deniedReason: "plugin-before-tool-call",
+            reason: `Browser target=node is blocked; forced profile="${constraints.browserProfile}".`,
+            params,
+          };
+        }
+        if (p.profile !== constraints.browserProfile) {
+          p.profile = constraints.browserProfile;
+        }
+      }
+
+      // allowedNodes / deniedNodes enforcement
+      if (constraints.allowedNodes?.length || constraints.deniedNodes?.length) {
+        let targetNode: string | undefined;
+        if (normalizedName === "browser" && p.target === "node" && typeof p.node === "string") {
+          targetNode = p.node.trim();
+        } else if (
+          (normalizedName === "read" || normalizedName === "write" || normalizedName === "edit") &&
+          typeof p.node === "string"
+        ) {
+          targetNode = p.node.trim();
+        } else if (normalizedName === "nodes" && typeof p.node === "string") {
+          targetNode = p.node.trim();
+        }
+        if (targetNode) {
+          const lower = targetNode.toLowerCase();
+          if (constraints.allowedNodes?.length) {
+            const allowed = constraints.allowedNodes.some((n) => n.toLowerCase() === lower);
+            if (!allowed) {
+              return {
+                blocked: true,
+                kind: "veto",
+                deniedReason: "plugin-before-tool-call",
+                reason: `Node "${targetNode}" is not in allowedNodes: [${constraints.allowedNodes.join(", ")}].`,
+                params,
+              };
+            }
+          }
+          if (constraints.deniedNodes?.length) {
+            const denied = constraints.deniedNodes.some((n) => n.toLowerCase() === lower);
+            if (denied) {
+              return {
+                blocked: true,
+                kind: "veto",
+                deniedReason: "plugin-before-tool-call",
+                reason: `Node "${targetNode}" is in deniedNodes.`,
+                params,
+              };
+            }
+          }
+        }
+      }
+    }
+  }
+
   const hookRunner = getGlobalHookRunner();
   try {
     const hasBeforeToolCallHooks = hookRunner?.hasHooks("before_tool_call") === true;

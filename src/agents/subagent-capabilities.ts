@@ -13,6 +13,7 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
 import { loadSessionStore, resolveStorePath } from "../config/sessions.js";
+import type { SessionToolConstraints } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   isAcpSessionKey,
@@ -44,6 +45,7 @@ type SessionCapabilityEntry = {
   spawnedBy?: unknown;
   inheritedToolAllow?: unknown;
   inheritedToolDeny?: unknown;
+  toolConstraints?: unknown;
 };
 
 /** Minimal persisted session-store shape needed to resolve subagent capabilities. */
@@ -57,6 +59,7 @@ export type SessionCapabilityStore = Record<
     spawnedBy?: unknown;
     inheritedToolAllow?: unknown;
     inheritedToolDeny?: unknown;
+    toolConstraints?: unknown;
   }
 >;
 
@@ -373,4 +376,29 @@ export function resolveStoredSubagentInheritedToolAllowlist(
     store,
   });
   return normalizeInheritedToolAllowlist(entry?.inheritedToolAllow);
+}
+
+/** Resolve spawn-time tool constraints (browserProfile/allowedTools/deniedTools/allowedNodes/deniedNodes) stored on a subagent envelope. */
+export function resolveStoredSubagentToolConstraints(
+  sessionKey: string | undefined | null,
+  opts?: {
+    cfg?: OpenClawConfig;
+    store?: SessionCapabilityStore;
+  },
+): SessionToolConstraints | undefined {
+  const normalizedSessionKey = normalizeOptionalString(sessionKey);
+  if (!normalizedSessionKey || !shouldInspectStoredSubagentEnvelope(normalizedSessionKey)) {
+    return undefined;
+  }
+  const store = resolveSubagentCapabilityStore(normalizedSessionKey, opts);
+  const entry = resolveSessionCapabilityEntry({
+    sessionKey: normalizedSessionKey,
+    cfg: opts?.cfg,
+    store,
+  });
+  const raw = entry?.toolConstraints;
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  return raw as SessionToolConstraints;
 }
