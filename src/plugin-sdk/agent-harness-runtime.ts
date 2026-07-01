@@ -11,6 +11,7 @@ import {
   abortAndDrainEmbeddedAgentRun,
   abortEmbeddedAgentRun,
   clearActiveEmbeddedRun,
+  isActiveEmbeddedRunStreaming,
   queueEmbeddedAgentMessageWithOutcome,
   resolveActiveEmbeddedRunSessionId,
   setActiveEmbeddedRun,
@@ -180,6 +181,7 @@ export {
   abortAndDrainEmbeddedAgentRun as abortAndDrainAgentHarnessRun,
   abortEmbeddedAgentRun as abortAgentHarnessRun,
   clearActiveEmbeddedRun,
+  isActiveEmbeddedRunStreaming,
   resolveActiveEmbeddedRunSessionId,
   setActiveEmbeddedRun,
 };

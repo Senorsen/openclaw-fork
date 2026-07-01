@@ -4,6 +4,7 @@
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
 import {
   getActiveReplyRunCount,
+  isReplyRunStreamingForSessionId,
   listActiveReplyRunSessionKeys,
   listActiveReplyRunSessionIds,
   resolveActiveReplyRunSessionId,
@@ -142,4 +143,32 @@ export function resolveActiveEmbeddedRunSessionId(sessionKey: string): string | 
     resolveActiveReplyRunSessionId(normalizedSessionKey) ??
     ACTIVE_EMBEDDED_RUN_SESSION_IDS_BY_KEY.get(normalizedSessionKey)
   );
+}
+
+/**
+ * True when the active embedded run for this session id has actually started
+ * streaming the model response (i.e. reached `agent.prompt()`/`activeSession.prompt()`).
+ *
+ * Used to gate fast-path steer injection (e.g. Telegram's steer-bypass
+ * middleware, which short-circuits sequentialize) separately from the
+ * broader isStopped()/isActive() check used for in-turn steer eligibility.
+ * A run can be registered active (ACTIVE_EMBEDDED_RUNS has an entry) well
+ * before its own triggering message actually reaches the model — while it is
+ * still walking media understanding, history assembly, tool preparation,
+ * etc. Bypassing sequentialize and steering a second message straight into
+ * the steering queue during that window lets it jump ahead of the first
+ * message's own (still in-flight) prompt content once the loop drains
+ * pending steering messages before emitting turn output, producing
+ * out-of-order delivery. Callers that short-circuit normal queuing (instead
+ * of just gating in-turn injection) should require isStreaming() true, not
+ * merely "active but not yet stopped".
+ */
+export function isActiveEmbeddedRunStreaming(sessionId: string | undefined): boolean {
+  if (!sessionId) {
+    return false;
+  }
+  if (ACTIVE_EMBEDDED_RUNS.get(sessionId)?.isStreaming() === true) {
+    return true;
+  }
+  return isReplyRunStreamingForSessionId(sessionId);
 }

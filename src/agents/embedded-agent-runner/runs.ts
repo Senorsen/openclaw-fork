@@ -42,6 +42,7 @@ import { resolveEmbeddedSessionFileKey } from "./session-file-key.js";
 
 export {
   getActiveEmbeddedRunCount,
+  isActiveEmbeddedRunStreaming,
   listActiveEmbeddedRunSessionIds,
   listActiveEmbeddedRunSessionKeys,
   resolveActiveEmbeddedRunSessionId,

@@ -55,6 +55,7 @@ import { stringifyTelegramRawUpdateForLog } from "./raw-update-log.js";
 import { TELEGRAM_RICH_TEXT_LIMIT } from "./rich-message.js";
 import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
 import {
+  isActiveEmbeddedRunStreaming,
   queueAgentHarnessMessage,
   resolveActiveEmbeddedRunSessionId,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
@@ -286,6 +287,20 @@ export function createTelegramBotCore(
       });
       const sessionId = resolveActiveEmbeddedRunSessionId(baseSessionKey);
       if (!sessionId) {
+        return next();
+      }
+      // Only bypass sequentialize once the active run has actually started
+      // streaming (i.e. its own triggering message already reached
+      // agent.prompt()). A run is registered active as soon as it's picked up
+      // by the runtime, well before its prompt content (media understanding,
+      // history assembly, tool prep, etc.) finishes and is actually submitted.
+      // Steering into that still-pending run's queue would let this message
+      // jump ahead of the first message's own prompt content once the loop
+      // drains queued steering before emitting turn output — producing
+      // out-of-order delivery. If not streaming yet, fall through to the
+      // normal sequentialize-ordered path so ordering with the in-flight
+      // message is preserved.
+      if (!isActiveEmbeddedRunStreaming(sessionId)) {
         return next();
       }
       if (isMediaOnly) {
