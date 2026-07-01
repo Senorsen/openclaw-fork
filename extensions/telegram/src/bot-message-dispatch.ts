@@ -1038,9 +1038,10 @@ export const dispatchTelegramMessage = async ({
     if (activeAnswerDraftIsToolProgressOnly) {
       return;
     }
-    if (answerLane.hasStreamedMessage) {
-      await rotateAnswerLaneForNewMessage();
-    }
+    // Do not rotate to a new message just because hasStreamedMessage is true
+    // (e.g. an in-progress, not-yet-finalized answer/reasoning stream). Only a
+    // finalized lane (handled above) should force a new message; otherwise tool
+    // progress should keep editing the current in-flight message in place.
     activeAnswerDraftIsToolProgressOnly = true;
   }
   const progressDraft = createChannelProgressDraftCompositor({
