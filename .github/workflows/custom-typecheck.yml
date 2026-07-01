@@ -1,0 +1,27 @@
+name: Custom Branch Typecheck
+
+# Runs full TypeScript typechecking (tsgo:prod, covering src/** via
+# tsconfig.core.json and extensions/** via tsconfig.extensions.json) on the
+# custom patch branch. The main "Build Custom Image" workflow only runs
+# tsdown (transpile-only, no type errors surfaced), so this workflow is the
+# only CI signal that actually catches TypeScript type errors introduced by
+# custom patches (unused locals/params, wrong types, etc.) without requiring
+# a local `tsc`/`tsgo` run, which is disallowed for this branch's workflow.
+
+on:
+  push:
+    branches:
+      - "2026.6.11-custom"
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+
+      - name: Typecheck (core + extensions)
+        run: pnpm tsgo:prod
