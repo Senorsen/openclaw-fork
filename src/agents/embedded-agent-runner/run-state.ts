@@ -20,6 +20,13 @@ export type EmbeddedAgentQueueHandle = {
   kind?: "embedded";
   queueMessage: (text: string, options?: EmbeddedAgentQueueMessageOptions) => Promise<void>;
   isStreaming: () => boolean;
+  /**
+   * True once the run is no longer able to accept steering injections (aborted
+   * or past its final prompt phase). When present, this is preferred over
+   * isStreaming() so messages can be injected during tool-call phases too
+   * (real-time steer): active-but-not-yet-streaming runs still accept steer.
+   */
+  isStopped?: () => boolean;
   isCompacting: () => boolean;
   supportsTranscriptCommitWait?: boolean;
   cancel?: (reason?: "user_abort" | "restart" | "superseded") => void;

@@ -3714,6 +3714,11 @@ export async function runEmbeddedAttempt(
         params.onAttemptAbort?.();
         abortRun(false, reason === "restart" ? createAgentRunRestartAbortError() : undefined);
       };
+      // Real-time steer: tracks whether this attempt can still accept steering
+      // injections. Cleared once the prompt phase ends (see finally block near
+      // promptErrorSource assignment) so a message arriving after the run has
+      // moved on doesn't get silently swallowed into a dead queue.
+      let acceptingSteerMessages = true;
       const queueHandle: EmbeddedAgentQueueHandle & {
         kind: "embedded";
         cancel: (reason?: "user_abort" | "restart" | "superseded") => void;
@@ -3726,6 +3731,8 @@ export async function runEmbeddedAttempt(
           await steerActiveSessionWithOptionalDeliveryWait(activeSession, text, options);
         },
         isStreaming: () => activeSession.isStreaming,
+        isStopped: () =>
+          !acceptingSteerMessages || aborted || runAbortController.signal.aborted,
         isCompacting: () => subscription.isCompacting(),
         supportsTranscriptCommitWait: true,
         sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
@@ -4853,6 +4860,7 @@ export async function runEmbeddedAttempt(
             promptErrorSource = "prompt";
           }
         } finally {
+          acceptingSteerMessages = false;
           log.debug(
             `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
           );
