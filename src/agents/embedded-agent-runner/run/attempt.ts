@@ -2193,7 +2193,7 @@ export async function runEmbeddedAttempt(
           params.model.api === "azure-openai-responses" ||
           params.model.api === "openai-chatgpt-responses"
             ? "aborted"
-            : undefined,
+            : "skipped due to steering",
         allowedToolNames: replayAllowedToolNames,
         suppressNextUserMessagePersistence: params.suppressNextUserMessagePersistence,
         suppressTranscriptOnlyAssistantPersistence:
