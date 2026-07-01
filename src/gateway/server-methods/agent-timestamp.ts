@@ -2,7 +2,10 @@
 // agent messages without double-stamping channel envelopes or cron prompts.
 import { resolveUserTimezone } from "../../agents/date-time.js";
 import type { OpenClawConfig } from "../../config/types.js";
-import { formatZonedTimestamp } from "../../infra/format-time/format-datetime.ts";
+import {
+  formatZonedTimestamp,
+  weekdayShortEnToZh,
+} from "../../infra/format-time/format-datetime.ts";
 
 /**
  * Cron jobs inject "Current time: ..." into their messages.
@@ -49,7 +52,13 @@ export function buildTimestampPrefix(
   const dow = new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short" }).format(
     date,
   );
-  return `[${dow} ${formatted}] `;
+  // Also pair a Chinese weekday (周一..周日) in parentheses — mirrors the same
+  // reasoning as the English DOW: reduces day-of-week mistakes, and matches
+  // the primary language of this deployment. Looked up from the
+  // already-computed English short weekday instead of a second
+  // Intl.DateTimeFormat call.
+  const dowZh = weekdayShortEnToZh(dow);
+  return dowZh ? `[${dow} ${formatted}（${dowZh}）] ` : `[${dow} ${formatted}] `;
 }
 
 /**

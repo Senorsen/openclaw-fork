@@ -642,7 +642,7 @@ describe("injectTimestamp", () => {
       timezone: "America/New_York",
     });
 
-    expect(result).toMatch(/^\[Wed 2026-01-28 20:30 EST\] Is it the weekend\?$/);
+    expect(result).toMatch(/^\[Wed 2026-01-28 20:30 EST（周三）\] Is it the weekend\?$/);
   });
 
   it("uses channel envelope format with DOW prefix", () => {
@@ -651,7 +651,7 @@ describe("injectTimestamp", () => {
 
     const result = injectTimestamp("hello", { timezone: "America/New_York" });
 
-    expect(result).toBe(`[Wed ${expected}] hello`);
+    expect(result).toBe(`[Wed ${expected}（周三）] hello`);
   });
 
   it("always uses 24-hour format", () => {
