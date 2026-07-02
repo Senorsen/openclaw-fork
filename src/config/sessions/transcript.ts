@@ -547,12 +547,6 @@ function isRedundantDeliveryMirror(message: SessionTranscriptAssistantMessage): 
   return message.provider === "openclaw" && message.model === "delivery-mirror";
 }
 
-function isChannelFinalDeliveryMirror(message: SessionTranscriptAssistantMessage): boolean {
-  const marker = (message as { openclawDeliveryMirror?: SessionTranscriptDeliveryMirror })
-    .openclawDeliveryMirror;
-  return isRedundantDeliveryMirror(message) && marker?.kind === "channel-final";
-}
-
 function extractAssistantMessageText(message: SessionTranscriptAssistantMessage): string | null {
   if (!Array.isArray(message.content)) {
     return null;
