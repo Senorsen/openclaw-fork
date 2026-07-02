@@ -454,11 +454,7 @@ export async function appendExactAssistantMessageToSessionTranscript(params: {
         reason: "blocked by before_message_write",
       };
     }
-    const identifiedChannelFinal =
-      Boolean(explicitIdempotencyKey) && isChannelFinalDeliveryMirror(params.message);
     let latestEquivalentAssistantId: string | undefined;
-    // Unidentified delivery mirrors dedupe by latest text. Identified channel finals use their
-    // idempotency key so repeated replies on separate user turns remain distinct.
     const turn = await persistSessionTranscriptTurn(
       {
         sessionId: currentEntry.sessionId,
