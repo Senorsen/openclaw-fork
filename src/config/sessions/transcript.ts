@@ -332,6 +332,12 @@ export async function appendAssistantMessageToSessionTranscript(params: {
   updateMode?: SessionTranscriptUpdateMode;
   config?: OpenClawConfig;
   beforeMessageWrite?: AssistantBeforeMessageWrite;
+  /**
+   * When true, skip writing if the most recent assistant message in the
+   * transcript already contains the same text (prevents delivery-mirror
+   * duplicating an already-owned assistant turn).
+   */
+  skipIfRecentDuplicate?: boolean;
 }): Promise<SessionTranscriptAppendResult> {
   const sessionKey = params.sessionKey.trim();
   if (!sessionKey) {
@@ -485,7 +491,7 @@ export async function appendExactAssistantMessageToSessionTranscript(params: {
               : {}),
             shouldAppend: async (target) => {
               latestEquivalentAssistantId =
-                isRedundantDeliveryMirror(params.message) && !identifiedChannelFinal
+                isRedundantDeliveryMirror(params.message)
                   ? await findLatestEquivalentAssistantMessageId(
                       target.sessionFile,
                       preparedUnkeyedMessage as SessionTranscriptAssistantMessage,
