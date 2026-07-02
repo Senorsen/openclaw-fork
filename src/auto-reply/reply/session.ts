@@ -293,7 +293,38 @@ function resolveInitSessionStateAttemptContext(
 
 /** Initializes or reuses the reply session state for one inbound turn. */
 export async function initSessionState(params: InitSessionStateParams): Promise<SessionInitResult> {
-  return await initSessionStateAttempt(params, false);
+  // The exclusive writer lane serializes writes for a single agent's store, and
+  // initSessionStateAttempt retries a stale snapshot once inside that lane. Under
+  // bursty concurrency (same sessionKey hit from multiple channels at once) the
+  // guarded revision can still lose the race after that single in-lane retry, so
+  // retry the whole attempt a few more times OUTSIDE the lane with backoff. The
+  // backoff must stay outside the lane: the lane is keyed per-agent storePath, so
+  // sleeping while holding it would stall every other session for that agent.
+  const maxConflictRetries = 5;
+  let lastConflictError: unknown;
+  for (let attempt = 0; attempt <= maxConflictRetries; attempt++) {
+    if (attempt > 0) {
+      const backoffMs = Math.min(50 * 2 ** (attempt - 1), 800); // 50/100/200/400/800
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+    try {
+      return await initSessionStateAttempt(params, false);
+    } catch (error) {
+      const isConflict =
+        error instanceof Error &&
+        error.message.includes("reply session initialization conflicted");
+      if (isConflict && attempt < maxConflictRetries) {
+        lastConflictError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+  // Unreachable in practice (the loop either returns or throws), but keeps the
+  // type checker happy and preserves the original conflict error if it occurs.
+  throw lastConflictError instanceof Error
+    ? lastConflictError
+    : new Error("reply session initialization conflicted");
 }
 
 async function initSessionStateAttempt(
