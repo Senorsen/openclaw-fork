@@ -780,6 +780,20 @@
   z-index: var(--z-dropdown);
 }
 
+/* Desktop only: widen the expanded sidebar session picker so long session
+   names/metadata aren't cramped into the ~220px nav rail column. Mobile
+   keeps the full-width-of-trigger behavior defined above. */
+@media (min-width: 768px) {
+  .sidebar {
+    overflow: visible;
+  }
+
+  .sidebar-session-select:not(.sidebar-session-select--collapsed) .chat-session-picker {
+    width: 400px;
+    max-width: none;
+  }
+}
+
 .sidebar-recent-session {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr) auto;
