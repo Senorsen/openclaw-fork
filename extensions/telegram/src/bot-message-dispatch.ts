@@ -2390,6 +2390,20 @@ export const dispatchTelegramMessage = async ({
                           finalAnswerDelivered = false;
                           if (streamMode !== "progress") {
                             resetProgressDraftState();
+                          } else if (
+                            activeAnswerDraftIsToolProgressOnly &&
+                            answerLane.hasStreamedMessage &&
+                            !answerLane.finalized
+                          ) {
+                            // Steered turn: the previous turn's progress message
+                            // is still in-flight (not finalized). Freeze it in
+                            // place and start a fresh message for the new turn so
+                            // the old progress content is not overwritten.
+                            await answerLane.stream?.discard?.();
+                            answerLane.stream?.forceNewMessage();
+                            resetDraftLaneState(answerLane);
+                            resetProgressDraftState();
+                            finalAnswerDeliveryStarted = false;
                           }
                           if (answerLane.finalized) {
                             await rotateLaneForNewMessage(answerLane);
