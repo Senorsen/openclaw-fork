@@ -64,6 +64,7 @@ import { isPlainObject, truncateUtf16Safe } from "../utils.js";
 import {
   adjustedParamsByToolCallId,
   buildAdjustedParamsKey,
+  isTurnStopRequested,
   preExecutionBlockedToolCallIds,
   recordStructuredReplaySafeToolCall,
   structuredReplaySafeToolCallIds,
@@ -134,7 +135,11 @@ export type HookContext = {
 };
 
 type HookBlockedKind = "veto" | "failure";
-type HookBlockedReason = "plugin-before-tool-call" | "plugin-approval" | "tool-loop";
+type HookBlockedReason =
+  | "plugin-before-tool-call"
+  | "plugin-approval"
+  | "tool-loop"
+  | "turn-stopped-by-steer";
 type HookOutcome =
   | {
       blocked: true;
@@ -1043,6 +1048,33 @@ export async function runBeforeToolCallHook(args: {
 }): Promise<HookOutcome> {
   const toolName = normalizeToolName(args.toolName || "tool");
   const params = args.params;
+
+  // Turn-stop veto: if a new inbound message steered a stop signal for this
+  // session, skip every remaining pending tool call in the current turn. This
+  // runs before any other policy so pending calls short-circuit immediately.
+  // The flag is written by the embedded runner (requestEmbeddedAgentTurnStop)
+  // and cleared when the turn's prompt settles, so it only affects the turn
+  // that was asked to stop. Reading the shared state module avoids importing
+  // the embedded runner here (no circular dependency).
+  //
+  // The `message` tool is exempted: after the stop signal is injected the agent
+  // is asked to acknowledge with a one-line reply, and in message_tool_only
+  // delivery that reply is itself a `message` tool call. Vetoing it would drop
+  // the acknowledgment and leave the UI stuck, so let message delivery through.
+  const turnStopSessionId = args.ctx?.sessionId;
+  if (
+    turnStopSessionId &&
+    toolName !== "message" &&
+    isTurnStopRequested(turnStopSessionId)
+  ) {
+    return {
+      blocked: true,
+      kind: "veto",
+      deniedReason: "turn-stopped-by-steer",
+      reason: "skipped: 用户发来新消息，当前轮已暂停（本 tool call 被跳过）",
+      params,
+    };
+  }
 
   if (args.ctx?.sessionKey) {
     const { getDiagnosticSessionState, logToolLoopAction, detectToolCallLoop, recordToolCall } =

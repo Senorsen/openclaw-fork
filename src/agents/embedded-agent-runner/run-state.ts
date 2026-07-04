@@ -21,6 +21,16 @@ export type EmbeddedAgentQueueHandle = {
   queueMessage: (text: string, options?: EmbeddedAgentQueueMessageOptions) => Promise<void>;
   isStreaming: () => boolean;
   isCompacting: () => boolean;
+  /**
+   * Whether this run can no longer accept steered injections (e.g. its prompt
+   * has settled or it is aborting). When present, callers should prefer this
+   * over `isStreaming()` so steering is allowed during the tool-call phase too.
+   */
+  isStopped?: () => boolean;
+  /** Request that the current turn stop (skip remaining pending tool calls). */
+  requestTurnStop?: (reason: string) => void;
+  /** Whether the current turn has been asked to stop. */
+  isTurnStopRequested?: () => boolean;
   supportsTranscriptCommitWait?: boolean;
   cancel?: (reason?: "user_abort" | "restart" | "superseded") => void;
   abort: (reason?: "restart") => void;

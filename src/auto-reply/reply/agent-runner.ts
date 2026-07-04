@@ -14,6 +14,7 @@ import { hasVisibleAgentPayload } from "../../agents/embedded-agent-runner/deliv
 import {
   formatEmbeddedAgentQueueFailureSummary,
   queueEmbeddedAgentMessageWithOutcomeAsync,
+  requestEmbeddedAgentTurnStop,
 } from "../../agents/embedded-agent-runner/runs.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
 import { resolveAgentIdentity } from "../../agents/identity.js";
@@ -1280,13 +1281,25 @@ export async function runReplyAgent(params: {
     }
   };
 
-  if (effectiveShouldSteer && isStreaming) {
+  if (effectiveShouldSteer && isActive) {
     const steerSessionId =
       (sessionKey ? replyRunRegistry.resolveSessionId(sessionKey) : undefined) ??
       followupRun.run.sessionId;
+    // Ask the active turn to stop: the before_tool_call hook will veto any
+    // remaining pending tool calls in this turn. Do this before injecting so the
+    // flag is visible as soon as the next tool call is evaluated.
+    requestEmbeddedAgentTurnStop(steerSessionId, "user_sent_new_message");
+    // Inject a fixed stop signal only — never the user's message content. The
+    // real inbound message is queued below as a follow-up (see R1), so it is
+    // delivered intact on the next turn with no reordering.
+    const STEER_STOP_SIGNAL =
+      "[系统] 用户刚刚发来了新消息。请立刻停止当前这一轮剩余的所有操作" +
+      "（本轮后续未执行的 tool call 已被自动跳过），用一句话简短回复用户，例如" +
+      "「我先暂停当前操作，马上处理你的新消息」，然后结束本轮。" +
+      "新消息会由系统在下一轮自动送达，你无需也不要在这里猜测其内容。";
     const steerOutcome = await queueEmbeddedAgentMessageWithOutcomeAsync(
       steerSessionId,
-      followupRun.prompt,
+      STEER_STOP_SIGNAL,
       {
         steeringMode: "all",
         ...(resolvedQueue.debounceMs !== undefined ? { debounceMs: resolvedQueue.debounceMs } : {}),
@@ -1294,11 +1307,17 @@ export async function runReplyAgent(params: {
     );
     if (steerOutcome.queued) {
       await touchActiveSessionEntry();
-      typing.cleanup();
-      return undefined;
+      // IMPORTANT (R1): do NOT return here. The stop signal has been steered,
+      // but the user's actual message must still be delivered. Fall through to
+      // resolveActiveRunQueueAction below, which — in steer mode shouldFollowup
+      // is true — returns "enqueue-followup" and queues followupRun so the real
+      // message runs on the next turn (intact, in order).
+    } else {
+      const summary = formatEmbeddedAgentQueueFailureSummary(steerOutcome);
+      logVerbose(
+        `queue: active session ${steerSessionId} rejected steering injection: ${summary}`,
+      );
     }
-    const summary = formatEmbeddedAgentQueueFailureSummary(steerOutcome);
-    logVerbose(`queue: active session ${steerSessionId} rejected steering injection: ${summary}`);
   }
 
   const activeRunQueueAction = resolveActiveRunQueueAction({

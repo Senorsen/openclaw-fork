@@ -7,6 +7,15 @@ export const adjustedParamsByToolCallId = new Map<string, unknown>();
 export const preExecutionBlockedToolCallIds = new Set<string>();
 export const structuredReplaySafeToolCallIds = new Set<string>();
 
+/**
+ * Session ids whose current agent turn has been asked to stop (steer-driven).
+ * Written by the embedded runner when a new inbound message steers a fixed stop
+ * signal, read by the before_tool_call hook to veto any remaining pending tool
+ * calls in the same turn. Kept here (a dependency-free leaf module) so runs.ts
+ * and the before_tool_call hook can share it without a circular import.
+ */
+export const turnStopRequestedSessionIds = new Set<string>();
+
 export function buildAdjustedParamsKey(params: { runId?: string; toolCallId: string }): string {
   if (params.runId && params.runId.trim()) {
     return `${params.runId}:${params.toolCallId}`;
@@ -37,6 +46,30 @@ export function consumePreExecutionBlockedToolCall(toolCallId: string, runId?: s
   return blocked;
 }
 
+/** Mark a session's current turn as requested-to-stop (steer-driven). */
+export function markTurnStopRequested(sessionId: string): void {
+  if (!sessionId) {
+    return;
+  }
+  turnStopRequestedSessionIds.add(sessionId);
+}
+
+/** Whether the session's current turn has been asked to stop. */
+export function isTurnStopRequested(sessionId: string): boolean {
+  if (!sessionId) {
+    return false;
+  }
+  return turnStopRequestedSessionIds.has(sessionId);
+}
+
+/** Clear the turn-stop flag for a session (call when a new turn starts/ends). */
+export function clearTurnStopRequested(sessionId: string): void {
+  if (!sessionId) {
+    return;
+  }
+  turnStopRequestedSessionIds.delete(sessionId);
+}
+
 export function recordStructuredReplaySafeToolCall(toolCallId: string, runId?: string): void {
   structuredReplaySafeToolCallIds.add(buildAdjustedParamsKey({ runId, toolCallId }));
 }
@@ -53,4 +86,5 @@ export function resetAdjustedParamsByToolCallIdForTests(): void {
   adjustedParamsByToolCallId.clear();
   preExecutionBlockedToolCallIds.clear();
   structuredReplaySafeToolCallIds.clear();
+  turnStopRequestedSessionIds.clear();
 }

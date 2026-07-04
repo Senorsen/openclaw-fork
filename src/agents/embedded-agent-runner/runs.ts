@@ -39,6 +39,10 @@ import {
   type EmbeddedRunWaiter,
 } from "./run-state.js";
 import { resolveEmbeddedSessionFileKey } from "./session-file-key.js";
+import {
+  isTurnStopRequested as isTurnStopRequestedForSession,
+  markTurnStopRequested,
+} from "../agent-tools.before-tool-call.state.js";
 
 export {
   getActiveEmbeddedRunCount,
@@ -395,7 +399,11 @@ function prepareEmbeddedAgentQueueMessage(
     diag.debug(`queue message failed: sessionId=${sessionId} reason=no_active_run`);
     return { kind: "complete", outcome: createQueueFailureOutcome(sessionId, "no_active_run") };
   }
-  if (!handle.isStreaming()) {
+  // Allow steered injection during the tool-call phase (isStreaming=false) as
+  // long as the run has not yet settled/aborted. `isStopped` reflects the run's
+  // steering lifecycle; fall back to `isStreaming()` for handles that predate it.
+  const isInjectable = handle.isStopped ? !handle.isStopped() : handle.isStreaming();
+  if (!isInjectable) {
     diag.debug(`queue message failed: sessionId=${sessionId} reason=not_streaming`);
     return { kind: "complete", outcome: createQueueFailureOutcome(sessionId, "not_streaming") };
   }
@@ -531,6 +539,37 @@ export function isEmbeddedAgentRunStreaming(sessionId: string): boolean {
     return isReplyRunStreamingForSessionId(sessionId);
   }
   return handle.isStreaming();
+}
+
+/**
+ * Request that the active run's current turn stop: sets the turn-stop flag so
+ * the before_tool_call hook vetoes any remaining pending tool calls in this
+ * turn. Writes the shared turn-stop state directly (keyed by sessionId) and,
+ * when the handle exposes it, also flips the handle-local flag. Returns true if
+ * a turn stop was recorded.
+ */
+export function requestEmbeddedAgentTurnStop(sessionId: string, reason: string): boolean {
+  if (!sessionId) {
+    return false;
+  }
+  const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
+  // Record on the shared state regardless so the before_tool_call hook can veto
+  // even if the handle predates requestTurnStop.
+  markTurnStopRequested(sessionId);
+  handle?.requestTurnStop?.(reason);
+  return true;
+}
+
+/** Whether the active run's current turn has been asked to stop. */
+export function isEmbeddedAgentTurnStopRequested(sessionId: string): boolean {
+  if (!sessionId) {
+    return false;
+  }
+  const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
+  if (handle?.isTurnStopRequested) {
+    return handle.isTurnStopRequested();
+  }
+  return isTurnStopRequestedForSession(sessionId);
 }
 
 export function resolveActiveEmbeddedRunHandleSessionId(sessionKey: string): string | undefined {

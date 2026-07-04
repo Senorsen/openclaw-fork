@@ -304,6 +304,10 @@ import {
   updateActiveEmbeddedRunSessionFile,
   updateActiveEmbeddedRunSnapshot,
 } from "../runs.js";
+import {
+  clearTurnStopRequested,
+  markTurnStopRequested,
+} from "../../agent-tools.before-tool-call.state.js";
 import { buildEmbeddedSandboxInfo, resolveEmbeddedSandboxInfoExecPolicy } from "../sandbox-info.js";
 import {
   mapSandboxSkillEntriesForPrompt,
@@ -2521,6 +2525,11 @@ export async function runEmbeddedAttempt(
       }
       session.setActiveToolsByName(sessionToolAllowlist);
       const activeSession = session;
+      // Steer/follow-up burst handling (aligns with 5.18 2b373f8167): process all
+      // steered messages within a turn rather than one at a time, so multiple
+      // rapid inbound messages each get a chance to inject their stop signal.
+      activeSession.setSteeringMode("all");
+      activeSession.setFollowUpMode("all");
       const setActiveSessionSystemPrompt = (nextSystemPrompt: string) => {
         systemPromptText = nextSystemPrompt;
         applySystemPromptToSession(activeSession, nextSystemPrompt);
@@ -3418,13 +3427,39 @@ export async function runEmbeddedAttempt(
       };
       const abortable = <T>(promise: Promise<T>): Promise<T> =>
         abortableWithSignal(runAbortController.signal, promise);
+      // Steering lifecycle flags (mirrors 5.18 af0b24eadb):
+      // - acceptingSteerMessages: allow steered injection during the tool-call
+      //   phase (isStreaming=false) until the prompt settles.
+      // - turnStopRequested: set when a new inbound message steers a fixed stop
+      //   signal; read by the before_tool_call hook to skip remaining pending
+      //   tool calls in this turn. Reset at the start of every prompt so the
+      //   flag never leaks across turns (risk R3).
+      let acceptingSteerMessages = true;
+      let turnStopRequested: string | null = null;
+      const resetTurnStopState = () => {
+        turnStopRequested = null;
+        if (params.sessionId) {
+          clearTurnStopRequested(params.sessionId);
+        }
+      };
       const promptActiveSession = (
         prompt: string,
         options?: Parameters<typeof activeSession.prompt>[1],
-      ): Promise<void> =>
-        withOwnedSessionTranscriptWrites(ownedTranscriptWriteContext, async () =>
-          abortable(trackPromptSettlePromise(activeSession.prompt(prompt, options))),
-        );
+      ): Promise<void> => {
+        // A new turn begins: clear any stop flag from the previous turn.
+        acceptingSteerMessages = true;
+        resetTurnStopState();
+        return withOwnedSessionTranscriptWrites(ownedTranscriptWriteContext, async () => {
+          try {
+            return await abortable(trackPromptSettlePromise(activeSession.prompt(prompt, options)));
+          } finally {
+            // Once the prompt settles, this turn can no longer be steered and the
+            // stop flag (if any) is cleared so it never affects the next turn.
+            acceptingSteerMessages = false;
+            resetTurnStopState();
+          }
+        });
+      };
       // Hook runner was already obtained earlier before tool creation.
       const hookAgentId = sessionAgentId;
       let beforeAgentFinalizeRevisionReason: string | undefined;
@@ -3723,6 +3758,15 @@ export async function runEmbeddedAttempt(
         },
         isStreaming: () => activeSession.isStreaming,
         isCompacting: () => subscription.isCompacting(),
+        isStopped: () =>
+          !acceptingSteerMessages || aborted || runAbortController.signal.aborted,
+        requestTurnStop: (reason: string) => {
+          turnStopRequested = reason;
+          if (params.sessionId) {
+            markTurnStopRequested(params.sessionId);
+          }
+        },
+        isTurnStopRequested: () => turnStopRequested !== null,
         supportsTranscriptCommitWait: true,
         sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
         cancel: abortActiveRunExternally,
