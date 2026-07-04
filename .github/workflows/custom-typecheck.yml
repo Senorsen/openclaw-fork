@@ -12,6 +12,7 @@ on:
   push:
     branches:
       - "2026.6.11-custom"
+      - "2026.6.11-custom-lite"
 
 jobs:
   typecheck:
