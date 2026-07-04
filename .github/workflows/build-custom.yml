@@ -32,9 +32,18 @@ jobs:
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-6)
           LOCK_HASH=$(sha256sum pnpm-lock.yaml | cut -c1-8)
-          echo "tag=2026.6.11-custom.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          BRANCH="${GITHUB_REF_NAME}"
+          if [[ "$BRANCH" == *"-lite"* ]]; then
+            TAG_PREFIX="2026.6.11-lite"
+            LATEST_TAG="6.11-lite-latest"
+          else
+            TAG_PREFIX="2026.6.11-custom"
+            LATEST_TAG="6.11-custom-latest"
+          fi
+          echo "tag=${TAG_PREFIX}.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
           echo "lock_hash=${LOCK_HASH}" >> "$GITHUB_OUTPUT"
-          echo "Building tag: 2026.6.11-custom.${SHORT_SHA} (lock: ${LOCK_HASH})"
+          echo "Building tag: ${TAG_PREFIX}.${SHORT_SHA} (lock: ${LOCK_HASH})"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -46,5 +55,5 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/senorsen/openclaw-fork:${{ steps.version.outputs.tag }}
-            ${{ env.REGISTRY }}/senorsen/openclaw-fork:6.11-custom-latest
+            ${{ env.REGISTRY }}/senorsen/openclaw-fork:${{ steps.version.outputs.latest_tag }}
           no-cache: true
