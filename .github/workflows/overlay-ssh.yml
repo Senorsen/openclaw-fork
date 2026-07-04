@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       base_tag:
-        description: 'Official openclaw Docker tag to overlay (e.g. 2026.7.3)'
+        description: 'Official openclaw Docker tag (e.g. 2026.6.11)'
         required: true
         type: string
 
@@ -28,25 +28,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create Dockerfile
+      - name: Build overlay image
         run: |
-          cat > Dockerfile.overlay << 'EOF'
-          ARG BASE_TAG
-          FROM ghcr.io/openclaw/openclaw:${BASE_TAG}
-          USER root
-          RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
-          USER node
-          EOF
+          BASE="${{ env.OFFICIAL_IMAGE }}:${{ inputs.base_tag }}"
+          TAG="${{ inputs.base_tag }}-ssh"
+          echo "FROM ${BASE}" > Dockerfile
+          echo "USER root" >> Dockerfile
+          echo "RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*" >> Dockerfile
+          echo "USER node" >> Dockerfile
+          echo "Building ${TAG} from ${BASE}..."
+          docker build -t "${{ env.TARGET_IMAGE }}:${TAG}" -t "${{ env.TARGET_IMAGE }}:latest-ssh" .
 
-      - name: Build and push
+      - name: Push
         run: |
           TAG="${{ inputs.base_tag }}-ssh"
-          docker build \
-            --build-arg BASE_TAG="${{ inputs.base_tag }}" \
-            -f Dockerfile.overlay \
-            -t "${{ env.TARGET_IMAGE }}:${TAG}" \
-            -t "${{ env.TARGET_IMAGE }}:latest-ssh" \
-            .
           docker push "${{ env.TARGET_IMAGE }}:${TAG}"
           docker push "${{ env.TARGET_IMAGE }}:latest-ssh"
-          echo "✅ Pushed ${{ env.TARGET_IMAGE }}:${TAG}"
+          echo "✅ Pushed ${{ env.TARGET_IMAGE }}:${TAG} and latest-ssh"
