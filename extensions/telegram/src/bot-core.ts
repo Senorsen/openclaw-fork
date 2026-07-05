@@ -42,6 +42,11 @@ import {
 } from "./client-fetch.js";
 import { resolveTelegramTransport } from "./fetch.js";
 import { stringifyTelegramRawUpdateForLog } from "./raw-update-log.js";
+import {
+  buildSteerStopHint,
+  formatReceivedAtWithWeekday,
+  resolveTelegramReceiveTimezone,
+} from "./received-time.js";
 import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
 import {
   queueAgentHarnessMessage,
@@ -223,7 +228,9 @@ export function createTelegramBotCore(
     }
   });
 
-  // --- Steer bypass: inject messages into active agent runs without waiting for sequentialize ---
+  // --- Steer stop-gate: when a run is active, inject a fixed STOP hint (no user
+  //     content) then let the real message flow through sequentialize + the
+  //     follow-up queue in receive order (batched). Never inline-steers raw text. ---
   const steerBypassLogger = createSubsystemLogger("gateway/channels/telegram/steer-bypass");
   bot.use(async (ctx, next) => {
     const msg = ctx.message ?? ctx.channelPost;
@@ -266,26 +273,40 @@ export function createTelegramBotCore(
       if (!sessionId) {
         return next();
       }
-      if (isMediaOnly) {
-        // Media messages: inject a steer hint so agent stops, then let media go through
-        // normal pipeline. Since agent will finish current tool call and yield,
-        // sequentialize won't block long.
-        const mediaType = msg.voice || msg.audio ? "voice/audio" : msg.photo ? "photo" : msg.video ? "video" : msg.document ? "document" : "media";
-        queueAgentHarnessMessage(sessionId,
-          `[User sent a new ${mediaType} message. Stop current work after this tool call and process it.]`,
-        );
-        steerBypassLogger.debug(
-          `steer bypass: injected media hint into active session ${sessionId} (chat=${chatId})`,
-        );
-        return next(); // Let media go through normal pipeline
-      }
-      const queued = queueAgentHarnessMessage(sessionId, rawText!);
-      if (queued) {
-        steerBypassLogger.debug(
-          `steer bypass: injected message into active session ${sessionId} (chat=${chatId})`,
-        );
-        return; // Short-circuit: don't enter sequentialize queue
-      }
+      // Unified behavior (custom): regardless of message type (text, voice,
+      // photo, document, ...), inject a fixed STOP hint into the active run and
+      // then let the real message flow through the normal pipeline so it lands in
+      // the follow-up queue in receive order. We intentionally never steer the
+      // user's raw text inline anymore — that caused reordering. The stop hint
+      // carries the true receive time (not the processing time) plus the Chinese
+      // weekday, and never includes the user's actual message content.
+      const receiveTz = resolveTelegramReceiveTimezone(cfg.agents?.defaults?.userTimezone);
+      const receivedAtMs =
+        typeof msg.date === "number" && msg.date > 0 ? msg.date * 1000 : Date.now();
+      const receivedAtText = formatReceivedAtWithWeekday(receivedAtMs, receiveTz);
+      const mediaType = isMediaOnly
+        ? msg.voice || msg.audio
+          ? "语音"
+          : msg.photo
+            ? "图片"
+            : msg.video
+              ? "视频"
+              : msg.document
+                ? "文件"
+                : "媒体"
+        : undefined;
+      queueAgentHarnessMessage(
+        sessionId,
+        buildSteerStopHint({ mediaType, receivedAtText }),
+      );
+      steerBypassLogger.debug(
+        `steer bypass: injected stop hint into active session ${sessionId} ` +
+          `(chat=${chatId}, media=${isMediaOnly}, receivedAt=${receivedAtText})`,
+      );
+      // Let the real message go through the normal pipeline (sequentialize +
+      // follow-up queue). Multiple messages arriving during the busy turn batch
+      // together in the queue instead of being steered one-by-one.
+      return next();
     } catch (err) {
       steerBypassLogger.debug(
         `steer bypass: failed for chat=${chatId}: ${String(err)}`,

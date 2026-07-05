@@ -322,7 +322,15 @@ export function scheduleFollowupDrain(
         if (queue.items.length === 0 && queue.droppedCount === 0) {
           break;
         }
-        if (queue.mode === "collect") {
+        // Custom: batch queued backlog for both "collect" and "steer" modes.
+        //
+        // In this fork, steer no longer injects the user's message inline (the
+        // channel middleware injects a fixed stop hint and lets the real message
+        // fall through to this follow-up queue). So when several messages arrive
+        // while the agent is busy, we want them delivered together as one batch
+        // in receive order, exactly like collect mode — not one message per turn.
+        // followup/interrupt modes are unaffected.
+        if (queue.mode === "collect" || queue.mode === "steer") {
           // Once the batch is mixed, never collect again within this drain.
           // Prevents “collect after shift” collapsing different targets.
           //

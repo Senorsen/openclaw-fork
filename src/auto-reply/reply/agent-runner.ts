@@ -9,10 +9,6 @@ import { resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import { isCliProvider } from "../../agents/model-selection.js";
-import {
-  formatEmbeddedPiQueueFailureSummary,
-  queueEmbeddedPiMessageWithOutcomeAsync,
-} from "../../agents/pi-embedded-runner/runs.js";
 import { deriveContextPromptTokens, hasNonzeroUsage, normalizeUsage } from "../../agents/usage.js";
 import { enqueueCommitmentExtraction } from "../../commitments/runtime.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -96,7 +92,6 @@ import { createReplyMediaContext } from "./reply-media-paths.js";
 import {
   createReplyOperation,
   ReplyRunAlreadyActiveError,
-  replyRunRegistry,
   type ReplyOperation,
 } from "./reply-run-registry.js";
 import { createReplyToModeFilterForChannel, resolveReplyToMode } from "./reply-threading.js";
@@ -1154,25 +1149,23 @@ export async function runReplyAgent(params: {
     }
   };
 
+  // Custom: do NOT inline-steer the user's raw message into the active run.
+  //
+  // Previously, in steer mode we injected `followupRun.prompt` (the user's actual
+  // message) into the running turn and returned early. That could reorder
+  // messages relative to the turn's own output and relative to sibling messages.
+  //
+  // New model: the channel ingress (e.g. Telegram steer-bypass middleware)
+  // injects a fixed STOP hint that carries no user content, and every real
+  // message falls through here to the follow-up queue so it is delivered intact,
+  // in receive order, and batched together (see queue drain). We therefore skip
+  // the inline-steer injection entirely and let `resolveActiveRunQueueAction`
+  // enqueue this run as a follow-up below.
   if (effectiveShouldSteer && isActive) {
-    const steerSessionId =
-      (sessionKey ? replyRunRegistry.resolveSessionId(sessionKey) : undefined) ??
-      followupRun.run.sessionId;
-    const steerOutcome = await queueEmbeddedPiMessageWithOutcomeAsync(
-      steerSessionId,
-      followupRun.prompt,
-      {
-        steeringMode: "all",
-        ...(resolvedQueue.debounceMs !== undefined ? { debounceMs: resolvedQueue.debounceMs } : {}),
-      },
+    logVerbose(
+      "queue: steer mode active-run injection disabled (custom); " +
+        "message will fall through to the follow-up queue in order",
     );
-    if (steerOutcome.queued) {
-      await touchActiveSessionEntry();
-      typing.cleanup();
-      return undefined;
-    }
-    const summary = formatEmbeddedPiQueueFailureSummary(steerOutcome);
-    logVerbose(`queue: active session ${steerSessionId} rejected steering injection: ${summary}`);
   }
 
   const activeRunQueueAction = resolveActiveRunQueueAction({

@@ -229,7 +229,7 @@ describe("runReplyAgent media path normalization", () => {
     expect(outboundAttachmentOptions?.mediaAccess?.workspaceDir).toBe("/tmp/workspace");
   });
 
-  it("steers active prompts in steer queue mode", async () => {
+  it("does not inline-steer active prompts in steer queue mode; queues them as followups instead", async () => {
     queueEmbeddedPiMessageWithOutcomeAsyncMock.mockImplementation(async (sessionId: string) => ({
       queued: true,
       sessionId,
@@ -242,18 +242,18 @@ describe("runReplyAgent media path normalization", () => {
         resolvedQueue: { mode: "steer" } as QueueSettings,
         shouldSteer: true,
         shouldFollowup: true,
+        isActive: true,
+        isRunActive: () => true,
         isStreaming: true,
       }),
     );
 
-    expect(queueEmbeddedPiMessageWithOutcomeAsyncMock).toHaveBeenLastCalledWith(
-      "session",
-      "generate chart",
-      {
-        steeringMode: "all",
-      },
-    );
-    expect(enqueueFollowupRunMock).not.toHaveBeenCalled();
+    // Custom behavior: steer mode no longer injects the user's raw message into
+    // the active run (that caused reordering). The real message falls through to
+    // the follow-up queue and is delivered intact, in order.
+    expect(queueEmbeddedPiMessageWithOutcomeAsyncMock).not.toHaveBeenCalled();
+    expect(enqueueFollowupRunMock).toHaveBeenCalledOnce();
+    expect(enqueueFollowupRunMock.mock.calls[0]?.[1].prompt).toBe("generate chart");
   });
 
   it("queues active prompts in followup mode without steering", async () => {
@@ -273,7 +273,7 @@ describe("runReplyAgent media path normalization", () => {
     expect(enqueueFollowupRunMock.mock.calls[0]?.[1].prompt).toBe("generate chart");
   });
 
-  it("falls back to a queued followup when active steering is rejected", async () => {
+  it("queues a followup in steer mode even when the run is active (no inline steer fallback needed)", async () => {
     queueEmbeddedPiMessageWithOutcomeAsyncMock.mockImplementation(async (sessionId: string) => ({
       queued: false,
       sessionId,
@@ -293,6 +293,9 @@ describe("runReplyAgent media path normalization", () => {
       }),
     );
 
+    // No inline steer attempt is made anymore, so there is no rejection to fall
+    // back from — the message is queued as a follow-up directly.
+    expect(queueEmbeddedPiMessageWithOutcomeAsyncMock).not.toHaveBeenCalled();
     expect(enqueueFollowupRunMock).toHaveBeenCalledOnce();
     expect(enqueueFollowupRunMock.mock.calls[0]?.[1].prompt).toBe("generate chart");
   });
