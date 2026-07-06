@@ -1624,7 +1624,7 @@ export const FIELD_HELP: Record<string, string> = {
   "session.agentToAgent.maxPingPongTurns":
     "Max reply-back turns between requester and target agents during agent-to-agent exchanges (0-20, default 5). Use lower values to hard-limit chatter loops and preserve predictable run completion.",
   "session.injectOutboundToTargetSession":
-    'When true and dmScope is an isolated mode (per-peer, per-channel-peer, per-account-channel-peer), outbound messages sent via the message tool are also recorded as assistant messages in the target user\'s session transcript. This preserves conversation context so the target user\'s next reply includes the sent message. Default: false.',
+    'When dmScope is an isolated mode (per-peer, per-channel-peer, per-account-channel-peer), outbound messages a human sends via the message tool from one conversation to another peer are also recorded as assistant messages in that target peer\'s session transcript. This preserves conversation context so the target peer\'s next reply includes the sent message. Only human-driven sends trigger this; agent-to-agent (subagent) and system-internal (cron/ACP) traffic never does. Enabled by default; set to false to opt out.',
   "session.threadBindings":
     "Shared defaults for thread-bound session routing behavior across providers that support thread focus workflows. Configure global defaults here and override per channel only when behavior differs.",
   "session.threadBindings.enabled":

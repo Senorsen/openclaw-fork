@@ -3,6 +3,11 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { appendAssistantMessageToSessionTranscript } from "../../config/sessions/transcript.js";
 import type { DmScope } from "../../config/types.base.js";
 import { buildAgentPeerSessionKey } from "../../routing/session-key.js";
+import {
+  isAcpSessionKey,
+  isCronSessionKey,
+  isSubagentSessionKey,
+} from "../../sessions/session-key-utils.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 
 const log = createSubsystemLogger("outbound/cross-session-inject");
@@ -17,6 +22,33 @@ function isIsolatedDmScope(dmScope: DmScope | undefined): boolean {
     dmScope === "per-channel-peer" ||
     dmScope === "per-account-channel-peer"
   );
+}
+
+/**
+ * Returns `true` when the *source* session that emitted this outbound message is
+ * a human-facing conversation session (a real user chatting with the agent),
+ * rather than an agent-to-agent or system-internal session.
+ *
+ * Cross-session inject only makes sense for the human case: a person talking to
+ * the agent in session A causes the agent to message another peer B, and we want
+ * B's next reply to "see" what was sent. It must NOT fire for:
+ *  - subagent sessions (agent-to-agent / spawned worker traffic)
+ *  - cron sessions (system-scheduled traffic)
+ *  - ACP sessions (programmatic agent-control-protocol traffic)
+ *
+ * When the source session key is unknown/empty we conservatively treat it as
+ * non-human (skip), because an unattributed send is more likely internal than a
+ * genuine human-driven message.
+ */
+function isHumanSourceSession(sourceSessionKey: string | null | undefined): boolean {
+  const key = sourceSessionKey?.trim();
+  if (!key) {
+    return false;
+  }
+  if (isSubagentSessionKey(key) || isCronSessionKey(key) || isAcpSessionKey(key)) {
+    return false;
+  }
+  return true;
 }
 
 export type CrossSessionInjectParams = {
@@ -44,11 +76,16 @@ export type CrossSessionInjectParams = {
  * message into the *target user's* session transcript as an assistant message.
  *
  * This is gated on:
- * 1. `session.injectOutboundToTargetSession` being `true`
- * 2. `session.dmScope` being an isolated scope (per-peer / per-channel-peer /
+ * 1. `session.injectOutboundToTargetSession` **not** being explicitly `false`.
+ *    The behaviour is **enabled by default** (undefined ⇒ on); set it to
+ *    `false` in config only if you want to opt out.
+ * 2. The *source* session being a human-facing conversation (not a
+ *    subagent / cron / ACP session). Agent-to-agent and system-internal
+ *    traffic never triggers an inject.
+ * 3. `session.dmScope` being an isolated scope (per-peer / per-channel-peer /
  *    per-account-channel-peer).
  *
- * When both conditions are met the outbound text (or media summary) is appended
+ * When all conditions are met the outbound text (or media summary) is appended
  * to the recipient's existing session file so the agent "remembers" what it said
  * the next time the recipient replies.
  *
@@ -66,8 +103,17 @@ export async function maybeCrossSessionInject(
   const { cfg, channel, agentId, accountId, targetPeerId, text, mediaUrls, sourceSessionKey } =
     params;
 
-  if (!cfg.session?.injectOutboundToTargetSession) {
+  // Enabled by default: only an explicit `false` opts out. This lets
+  // human-driven cross-session context work without any config.
+  if (cfg.session?.injectOutboundToTargetSession === false) {
     return { injected: false, reason: "disabled" };
+  }
+
+  // Only human-facing source sessions may inject. Skip agent-to-agent
+  // (subagent) and system-internal (cron / ACP) traffic so automated sends
+  // never pollute a human's session transcript.
+  if (!isHumanSourceSession(sourceSessionKey)) {
+    return { injected: false, reason: "non-human-source" };
   }
 
   const dmScope = cfg.session?.dmScope;
