@@ -244,18 +244,7 @@ export async function initSessionState(params: {
   // See #58409 for details on silent session reset bug.
   const isSystemEvent =
     ctx.Provider === "heartbeat" || ctx.Provider === "cron-event" || ctx.Provider === "exec-event";
-  // Inter-session deliveries (subagent completion announces, cron-triggered
-  // messages, and other proactive cross-session handoffs) are NOT the current
-  // interactive turn. They originate from the parent/main session and must be
-  // delivered to that session's own conversation, never re-routed by an active
-  // `/focus` conversation binding that points somewhere else. Otherwise a user
-  // who `/focus`-bound the chat to another session would silently stop
-  // receiving async replies (subagent-done notices, cron reminders, etc.).
-  const isInterSessionProvenance = isInterSessionInputProvenance(ctx.InputProvenance);
-  // Only genuine interactive user turns are allowed to follow a conversation
-  // binding (`/focus`). Automated/system and inter-session turns bypass it.
-  const suppressConversationBindingRetarget = isSystemEvent || isInterSessionProvenance;
-  const conversationBindingContext = suppressConversationBindingRetarget
+  const conversationBindingContext = isSystemEvent
     ? null
     : resolveSessionConversationBindingContext(cfg, ctx);
   // Native slash commands (Telegram/Discord/Slack) are delivered on a separate
@@ -574,10 +563,7 @@ export async function initSessionState(params: {
     : baseEntry?.usageFamilySessionIds;
   // Track the originating channel/to for announce routing (subagent announce-back).
   const originatingChannelRaw = ctx.OriginatingChannel as string | undefined;
-  // Reuse the inter-session provenance flag computed above (see
-  // suppressConversationBindingRetarget) so the delivery-route bookkeeping and
-  // the binding-retarget guard stay consistent.
-  const isInterSession = isInterSessionProvenance;
+  const isInterSession = isInterSessionInputProvenance(ctx.InputProvenance);
   // Automated heartbeat/cron/exec turns run inside the conversation session,
   // but they must not rewrite the session's remembered external delivery route.
   // Otherwise a heartbeat target like "group:..." or a synthetic sender like
