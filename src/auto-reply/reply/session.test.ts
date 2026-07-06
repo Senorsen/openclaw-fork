@@ -1365,6 +1365,103 @@ describe("initSessionState RawBody", () => {
   });
 });
 
+describe("initSessionState - inter-session async delivery bypasses /focus binding", () => {
+  it("does NOT retarget an inter-session (subagent announce) turn to the focus-bound session", async () => {
+    setMinimalCurrentConversationBindingRegistryForTests();
+    registerCurrentConversationBindingAdapterForTest({
+      channel: "slack",
+      accountId: "default",
+    });
+    const storePath = await createStorePath("openclaw-intersession-bypass-binding-");
+    // The Slack DM conversation is /focus-bound to some OTHER session.
+    const boundSessionKey = "agent:codex:acp:binding:slack:default:focused";
+    const conversation = {
+      channel: "slack",
+      accountId: "default",
+      conversationId: "user:U123",
+    };
+    await getSessionBindingService().bind({
+      targetSessionKey: boundSessionKey,
+      targetKind: "session",
+      conversation,
+    });
+
+    const originalSessionKey = "agent:main:slack:user:U123";
+    const result = await initSessionState({
+      ctx: {
+        RawBody: "subagent done",
+        Provider: "slack",
+        Surface: "slack",
+        AccountId: "default",
+        From: "slack:user:U123",
+        To: "user:U123",
+        OriginatingTo: "user:U123",
+        SenderId: "U123",
+        ChatType: "direct",
+        SessionKey: originalSessionKey,
+        // Proactive cross-session handoff (e.g. subagent completion announce).
+        InputProvenance: {
+          kind: "inter_session",
+          sourceSessionKey: "agent:main:subagent:abc-123",
+          sourceChannel: "__internal__",
+          sourceTool: "subagent_announce",
+        },
+      },
+      cfg: {
+        session: { store: storePath },
+      } as OpenClawConfig,
+      commandAuthorized: true,
+    });
+
+    // The async announce must stay on the original session (which delivers to
+    // the original Slack DM), NOT be hijacked onto the focus-bound session.
+    expect(result.sessionKey).toBe(originalSessionKey);
+    expect(result.sessionKey).not.toBe(boundSessionKey);
+  });
+
+  it("still retargets a genuine interactive user turn to the focus-bound session", async () => {
+    setMinimalCurrentConversationBindingRegistryForTests();
+    registerCurrentConversationBindingAdapterForTest({
+      channel: "slack",
+      accountId: "default",
+    });
+    const storePath = await createStorePath("openclaw-interactive-follows-binding-");
+    const boundSessionKey = "agent:codex:acp:binding:slack:default:focused";
+    const conversation = {
+      channel: "slack",
+      accountId: "default",
+      conversationId: "user:U123",
+    };
+    await getSessionBindingService().bind({
+      targetSessionKey: boundSessionKey,
+      targetKind: "session",
+      conversation,
+    });
+
+    const result = await initSessionState({
+      ctx: {
+        RawBody: "hello from a human",
+        Provider: "slack",
+        Surface: "slack",
+        AccountId: "default",
+        From: "slack:user:U123",
+        To: "user:U123",
+        OriginatingTo: "user:U123",
+        SenderId: "U123",
+        ChatType: "direct",
+        SessionKey: "agent:main:slack:user:U123",
+        // No InputProvenance => normal external user turn.
+      },
+      cfg: {
+        session: { store: storePath },
+      } as OpenClawConfig,
+      commandAuthorized: true,
+    });
+
+    expect(result.sessionKey).toBe(boundSessionKey);
+  });
+});
+
 describe("initSessionState reset policy", () => {
   let clearBootstrapSnapshotOnSessionRolloverSpy: ReturnType<typeof vi.spyOn>;
 
