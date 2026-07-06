@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 import type { ClearSessionQueueResult } from "../auto-reply/reply/queue.js";
 import {
+  clearSteerSkipPreflightCompaction,
+  markSteerSkipPreflightCompaction,
+} from "../auto-reply/reply/steer-compaction-skip.js";
+import {
   resolveSubagentLabel,
   resolveSubagentTargetFromRuns,
   sortSubagentRuns,
@@ -555,6 +559,12 @@ export async function steerControlledSubagentRun(params: {
 
   const idempotencyKey = crypto.randomUUID();
   let runId: string = idempotencyKey;
+  // A steer only injects a short message and must never itself trigger
+  // compaction. Aborting the previous run above marks the session's token total
+  // stale, which would otherwise push the fresh steered run's preflight gate
+  // onto an over-counting transcript estimate. Flag the session so the gate
+  // skips compaction for exactly this one steered turn.
+  markSteerSkipPreflightCompaction(params.entry.childSessionKey);
   try {
     const response = await subagentControlDeps.callGateway<{ runId: string }>({
       method: "agent",
@@ -574,6 +584,9 @@ export async function steerControlledSubagentRun(params: {
       runId = response.runId;
     }
   } catch (err) {
+    // The steered run never started; drop the skip flag so it can't leak into a
+    // later, unrelated turn on this session.
+    clearSteerSkipPreflightCompaction(params.entry.childSessionKey);
     clearSubagentRunSteerRestart(params.entry.runId);
     const error = formatErrorMessage(err);
     return {

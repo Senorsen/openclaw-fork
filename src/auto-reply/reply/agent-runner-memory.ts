@@ -56,6 +56,10 @@ import { refreshQueuedFollowupSession, type FollowupRun } from "./queue.js";
 import { isRenderablePayload } from "./reply-payloads-base.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import { incrementCompactionCount } from "./session-updates.js";
+import {
+  consumeSteerSkipPreflightCompaction,
+  peekSteerSkipPreflightCompaction,
+} from "./steer-compaction-skip.js";
 
 type PiEmbeddedRuntime = typeof import("../../agents/pi-embedded.js");
 
@@ -586,6 +590,20 @@ export async function runPreflightCompactionIfNeeded(params: {
     return entry ?? params.sessionEntry;
   }
 
+  // A subagent steer restarts the run with a tiny injected message. Aborting the
+  // prior run marks the token total stale, which would otherwise route this
+  // fresh run onto an over-counting transcript estimate and trigger an
+  // unnecessary compaction even at low real usage. The steer path flags the
+  // session so we skip preflight compaction here. We only peek (the memory-flush
+  // gate, which runs right after within the same turn, consumes the flag) so a
+  // single steer suppresses both compaction paths for exactly one turn.
+  if (peekSteerSkipPreflightCompaction(params.sessionKey)) {
+    logVerbose(
+      `preflightCompaction skipped: sessionKey=${params.sessionKey} reason=steer_restart`,
+    );
+    return entry ?? params.sessionEntry;
+  }
+
   const isCli = isCliProvider(params.followupRun.run.provider, params.cfg);
   if (params.isHeartbeat || isCli) {
     return entry ?? params.sessionEntry;
@@ -807,6 +825,17 @@ export async function runMemoryFlushIfNeeded(params: {
   replyOperation: ReplyOperation;
   onVisibleErrorPayloads?: (payloads: ReplyPayload[]) => void;
 }): Promise<SessionEntry | undefined> {
+  // Consume the steer skip flag (set by the subagent steer path and peeked by
+  // the preflight-compaction gate just above). A steer only injects a short
+  // message, so it must not trigger a memory-flush compaction either. Consuming
+  // here (before any other gating) makes the suppression single-shot: it covers
+  // exactly the one steered turn and never leaks into a later, organically-large
+  // turn on this session.
+  if (consumeSteerSkipPreflightCompaction(params.sessionKey)) {
+    logVerbose(`memoryFlush skipped: sessionKey=${params.sessionKey} reason=steer_restart`);
+    return params.sessionEntry;
+  }
+
   const memoryFlushPlan = resolveMemoryFlushPlan({ cfg: params.cfg });
   if (!memoryFlushPlan) {
     return params.sessionEntry;
