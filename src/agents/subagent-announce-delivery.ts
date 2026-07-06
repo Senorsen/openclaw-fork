@@ -400,6 +400,35 @@ export async function resolveSubagentCompletionOrigin(params: {
     );
   }
 
+  // `/focus` fallback for async deliveries that lack an external requester
+  // origin. When a chat is `/focus`-bound to a session that otherwise has no
+  // external delivery route of its own (e.g. the main session bound from
+  // Telegram), proactive completions still originate from that session with an
+  // empty `requesterOrigin`, so `requesterConversation` is undefined and the
+  // fail-closed lookups above skip the binding. Retry the requester-session
+  // lookup with `failClosed:false`: a *single* active conversation binding is
+  // unambiguous and identifies exactly the `/focus` origin to deliver to, while
+  // multiple bindings still fall back (ambiguous-without-requester). This is the
+  // outbound counterpart to the inbound `/focus` routing that already works for
+  // interactive turns.
+  if (!requesterConversation) {
+    const focusBoundRoute = router.resolveDestination({
+      eventKind: "task_completion",
+      targetSessionKey: params.requesterSessionKey,
+      failClosed: false,
+    });
+    if (focusBoundRoute.mode === "bound" && focusBoundRoute.binding) {
+      return mergeDeliveryContext(
+        resolveBoundConversationOrigin({
+          bindingConversation: focusBoundRoute.binding.conversation,
+          requesterConversation,
+          requesterOrigin,
+        }),
+        requesterOrigin,
+      );
+    }
+  }
+
   const hookRunner = getGlobalHookRunner();
   if (!hookRunner?.hasHooks("subagent_delivery_target")) {
     return requesterOrigin;

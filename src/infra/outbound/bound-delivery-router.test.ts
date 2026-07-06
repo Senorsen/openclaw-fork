@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { createBoundDeliveryRouter } from "./bound-delivery-router.js";
+import {
+  createBoundDeliveryRouter,
+  resolveFocusBindingDeliveryRoute,
+} from "./bound-delivery-router.js";
 import {
   __testing,
   registerSessionBindingAdapter,
@@ -196,4 +199,84 @@ describe("bound delivery router", () => {
       }
     },
   );
+});
+
+describe("resolveFocusBindingDeliveryRoute", () => {
+  beforeEach(() => {
+    __testing.resetSessionBindingAdaptersForTests();
+  });
+
+  const FOCUS_TARGET = "agent:main:main";
+
+  function registerTelegramBinding(
+    targetSessionKey: string,
+    conversationId: string,
+    conversationIdOverrides?: Partial<SessionBindingRecord["conversation"]>,
+  ): void {
+    const record: SessionBindingRecord = {
+      bindingId: `tg:${conversationId}`,
+      targetSessionKey,
+      targetKind: "session",
+      conversation: {
+        channel: "telegram",
+        accountId: "default",
+        conversationId,
+        ...conversationIdOverrides,
+      },
+      status: "active",
+      boundAt: 1,
+    };
+    registerSessionBindingAdapter({
+      channel: "telegram",
+      accountId: "default",
+      listBySession: (requestedSessionKey) =>
+        requestedSessionKey === targetSessionKey ? [record] : [],
+      resolveByConversation: () => null,
+    });
+  }
+
+  it("resolves the delivery route for a single active /focus binding", () => {
+    registerTelegramBinding(FOCUS_TARGET, "direct:203205281");
+    const route = resolveFocusBindingDeliveryRoute(FOCUS_TARGET);
+    expect(route?.channel).toBe("telegram");
+    expect(route?.accountId).toBe("default");
+    expect(route?.to).toBeTruthy();
+  });
+
+  it("returns undefined when the session has no binding", () => {
+    expect(resolveFocusBindingDeliveryRoute(FOCUS_TARGET)).toBeUndefined();
+  });
+
+  it("returns undefined for an empty session key", () => {
+    expect(resolveFocusBindingDeliveryRoute("  ")).toBeUndefined();
+  });
+
+  it("returns undefined when multiple active bindings make the target ambiguous", () => {
+    const records: SessionBindingRecord[] = [
+      {
+        bindingId: "tg:a",
+        targetSessionKey: FOCUS_TARGET,
+        targetKind: "session",
+        conversation: { channel: "telegram", accountId: "default", conversationId: "direct:a" },
+        status: "active",
+        boundAt: 1,
+      },
+      {
+        bindingId: "tg:b",
+        targetSessionKey: FOCUS_TARGET,
+        targetKind: "session",
+        conversation: { channel: "telegram", accountId: "default", conversationId: "direct:b" },
+        status: "active",
+        boundAt: 2,
+      },
+    ];
+    registerSessionBindingAdapter({
+      channel: "telegram",
+      accountId: "default",
+      listBySession: (requestedSessionKey) =>
+        requestedSessionKey === FOCUS_TARGET ? records : [],
+      resolveByConversation: () => null,
+    });
+    expect(resolveFocusBindingDeliveryRoute(FOCUS_TARGET)).toBeUndefined();
+  });
 });

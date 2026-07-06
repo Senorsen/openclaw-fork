@@ -149,6 +149,97 @@ describe("resolveEffectiveReplyRoute", () => {
   });
 });
 
+describe("resolveEffectiveReplyRoute - /focus binding fallback", () => {
+  it("uses the /focus binding for a cron-event turn when the session has no external route", () => {
+    // agent:main:main was only ever /focus-bound from Telegram; it has no
+    // lastChannel / deliveryContext of its own, so a cron reply would otherwise
+    // have nowhere to go.
+    expect(
+      resolveEffectiveReplyRoute({
+        ctx: ctx({ Provider: "cron-event" }),
+        entry: entry({}),
+        sessionKey: "agent:main:main",
+        resolveFocusBindingRoute: (key) =>
+          key === "agent:main:main"
+            ? { channel: "telegram", to: "direct:203205281", accountId: "default" }
+            : undefined,
+      }),
+    ).toEqual({
+      channel: "telegram",
+      to: "direct:203205281",
+      accountId: "default",
+    });
+  });
+
+  it("treats a webchat-only persisted route as non-deliverable and applies the /focus fallback", () => {
+    expect(
+      resolveEffectiveReplyRoute({
+        ctx: ctx({ Provider: "heartbeat" }),
+        entry: entry({ lastChannel: "webchat", lastTo: "web:session" }),
+        sessionKey: "agent:main:main",
+        resolveFocusBindingRoute: () => ({
+          channel: "telegram",
+          to: "direct:203205281",
+          accountId: "default",
+        }),
+      }),
+    ).toEqual({
+      channel: "telegram",
+      to: "direct:203205281",
+      accountId: "default",
+    });
+  });
+
+  it("does NOT apply the /focus fallback when the session already has a deliverable route", () => {
+    expect(
+      resolveEffectiveReplyRoute({
+        ctx: ctx({ Provider: "cron-event" }),
+        entry: entry({ lastChannel: "telegram", lastTo: "direct:real", lastAccountId: "default" }),
+        sessionKey: "agent:main:main",
+        resolveFocusBindingRoute: () => ({
+          channel: "slack",
+          to: "channel:other",
+          accountId: "default",
+        }),
+      }),
+    ).toEqual({
+      channel: "telegram",
+      to: "direct:real",
+      accountId: "default",
+    });
+  });
+
+  it("does NOT apply the /focus fallback for normal (interactive) provider turns", () => {
+    expect(
+      resolveEffectiveReplyRoute({
+        ctx: ctx({ Provider: "telegram", OriginatingChannel: "telegram", OriginatingTo: "chat:x" }),
+        entry: entry({}),
+        sessionKey: "agent:main:main",
+        resolveFocusBindingRoute: () => ({ channel: "slack", to: "channel:other" }),
+      }),
+    ).toEqual({
+      channel: "telegram",
+      to: "chat:x",
+      accountId: undefined,
+    });
+  });
+
+  it("keeps the (undeliverable) route when no /focus binding is present", () => {
+    expect(
+      resolveEffectiveReplyRoute({
+        ctx: ctx({ Provider: "cron-event" }),
+        entry: entry({}),
+        sessionKey: "agent:main:main",
+        resolveFocusBindingRoute: () => undefined,
+      }),
+    ).toEqual({
+      channel: undefined,
+      to: undefined,
+      accountId: undefined,
+    });
+  });
+});
+
 describe("isSystemEventProvider", () => {
   it("recognizes persisted-delivery event providers", () => {
     expect(isSystemEventProvider("heartbeat")).toBe(true);

@@ -1,3 +1,4 @@
+import { resolveConversationDeliveryTarget } from "../../utils/delivery-context.js";
 import { normalizeConversationRef } from "./session-binding-normalization.js";
 import {
   getSessionBindingService,
@@ -25,6 +26,66 @@ export type BoundDeliveryRouter = {
 
 function isActiveBinding(record: SessionBindingRecord): boolean {
   return record.status === "active";
+}
+
+export type FocusBindingDeliveryRoute = {
+  channel: string;
+  accountId?: string;
+  to?: string;
+  threadId?: string;
+};
+
+/**
+ * Resolve the delivery route implied by a `/focus` conversation binding on a
+ * target session, if (and only if) exactly one active binding exists.
+ *
+ * This is the outbound counterpart to the inbound `/focus` routing. When a chat
+ * is `/focus`-bound to a session that has no external delivery route of its own
+ * (e.g. `agent:main:main` bound from a Telegram DM), proactive/async turns that
+ * run inside that session — cron reminders, heartbeat nudges, exec-event
+ * notifications, subagent completion announces — otherwise have no idea which
+ * external channel to deliver to and silently land only on the web surface.
+ *
+ * A single active binding is unambiguous and identifies exactly the `/focus`
+ * origin to deliver to. Multiple bindings are ambiguous without a requester and
+ * intentionally return `undefined` (callers keep their existing behavior).
+ */
+export function resolveFocusBindingDeliveryRoute(
+  targetSessionKey: string,
+  service: SessionBindingService = getSessionBindingService(),
+): FocusBindingDeliveryRoute | undefined {
+  const key = targetSessionKey.trim();
+  if (!key) {
+    return undefined;
+  }
+  const activeBindings = service.listBySession(key).filter(isActiveBinding);
+  if (activeBindings.length !== 1) {
+    return undefined;
+  }
+  const binding = activeBindings[0];
+  if (!binding) {
+    return undefined;
+  }
+  const conversation = normalizeConversationRef(binding.conversation);
+  if (!conversation.channel) {
+    return undefined;
+  }
+  const conversationId = conversation.conversationId?.trim() ?? "";
+  const parentConversationId = conversation.parentConversationId?.trim() ?? "";
+  const target = resolveConversationDeliveryTarget({
+    channel: conversation.channel,
+    conversationId,
+    parentConversationId,
+  });
+  const threadId =
+    target.threadId ??
+    (parentConversationId && parentConversationId !== conversationId ? conversationId : undefined);
+  return {
+    channel: conversation.channel,
+    accountId: conversation.accountId,
+    to: target.to,
+    threadId,
+  };
 }
 
 function resolveBindingForRequester(

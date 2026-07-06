@@ -45,6 +45,7 @@ import {
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { resolveFocusBindingDeliveryRoute } from "../../infra/outbound/bound-delivery-router.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
 import {
   logMessageProcessed,
@@ -520,7 +521,13 @@ export async function dispatchReplyFromConfig(
           "",
       ) ?? "off",
   });
-  const replyRoute = resolveEffectiveReplyRoute({ ctx, entry: sessionStoreEntry.entry });
+  const replyRoute = resolveEffectiveReplyRoute({
+    ctx,
+    entry: sessionStoreEntry.entry,
+    sessionKey: acpDispatchSessionKey,
+    resolveFocusBindingRoute: (targetSessionKey) =>
+      resolveFocusBindingDeliveryRoute(targetSessionKey),
+  });
   // Restore route thread context only from the active turn or the thread-scoped session key.
   // Do not read thread ids from the normalised session store here: `origin.threadId` can be
   // folded back into lastThreadId/deliveryContext during store normalisation and resurrect a
