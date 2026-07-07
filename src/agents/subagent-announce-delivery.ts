@@ -7,7 +7,12 @@ import { stringifyRouteThreadId } from "../plugin-sdk/channel-route.js";
 import { normalizeAccountId } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
 import { deriveSessionChatTypeFromKey } from "../sessions/session-chat-type-shared.js";
-import { isCronSessionKey } from "../sessions/session-key-utils.js";
+import {
+  isCronRunSessionKey,
+  isCronSessionKey,
+  isSubagentSessionKey,
+  parseAgentSessionKey,
+} from "../sessions/session-key-utils.js";
 import { isNonTerminalAgentRunStatus } from "../shared/agent-run-status.js";
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 import {
@@ -192,6 +197,84 @@ function resolveBoundConversationOrigin(params: {
     to: boundTarget.to,
     threadId: inferredThreadId,
   };
+}
+
+/**
+ * Resolve the delivery origin for a session's single active `/focus`
+ * conversation binding, when the session has no external requester origin of
+ * its own. Returns `undefined` when there is no binding, or when the binding is
+ * ambiguous (multiple active bindings) so a fail-closed lookup cannot pick one.
+ *
+ * This is the shared helper behind both the completion-origin `/focus`
+ * fallback (which channel to deliver to) and the `deliveredViaFocusBinding`
+ * detection (whether the resolved target is a borrowed `/focus` route rather
+ * than a native external origin). Keeping both on one query guarantees they
+ * agree about what "the focus binding target" is.
+ */
+function resolveActiveFocusBindingOrigin(params: {
+  requesterSessionKey: string;
+  requesterOrigin?: DeliveryContext;
+  router?: ReturnType<typeof createBoundDeliveryRouter>;
+}): DeliveryContext | undefined {
+  const router = params.router ?? createBoundDeliveryRouter();
+  const focusBoundRoute = router.resolveDestination({
+    eventKind: "task_completion",
+    targetSessionKey: params.requesterSessionKey,
+    failClosed: false,
+  });
+  if (focusBoundRoute.mode !== "bound" || !focusBoundRoute.binding) {
+    return undefined;
+  }
+  return mergeDeliveryContext(
+    resolveBoundConversationOrigin({
+      bindingConversation: focusBoundRoute.binding.conversation,
+      requesterConversation: undefined,
+      requesterOrigin: params.requesterOrigin,
+    }),
+    params.requesterOrigin,
+  );
+}
+
+/**
+ * Whether the requester session key identifies a *channel-native* direct
+ * (1:1) session — i.e. a session whose key itself encodes the external
+ * provider + a direct chat (e.g. `agent:main:telegram:direct:<peer>`), as
+ * opposed to a local/orchestration session (`agent:main:main`, cron, etc.)
+ * that only *borrows* an external channel via a persisted deliveryContext or a
+ * `/focus` binding.
+ *
+ * The deterministic message-tool-only DM completion contract (which forbids
+ * the runtime's automatic final delivery to avoid double-sends) is correct for
+ * channel-native DM sessions: the awakened parent turn was itself triggered
+ * from that DM and answers with the message tool. But for a `/focus`-bound
+ * local session such as `agent:main:main`, the parent answers completion
+ * events *inline* and relies on its normal final delivery — which
+ * `resolveEffectiveReplyRoute` / the persisted deliveryContext already route to
+ * the focus channel. Forcing message-tool-only there fails delivery entirely
+ * ("completion agent did not deliver through the message tool"), because the
+ * parent legitimately never calls the message tool for its own completion
+ * reply. So we must NOT force the message-tool path for those sessions.
+ */
+function requesterSessionIsChannelNativeDirect(requesterSessionKey: string): boolean {
+  if (
+    isCronSessionKey(requesterSessionKey) ||
+    isCronRunSessionKey(requesterSessionKey) ||
+    isSubagentSessionKey(requesterSessionKey)
+  ) {
+    return false;
+  }
+  const parsed = parseAgentSessionKey(requesterSessionKey);
+  const rest = parsed?.rest;
+  if (!rest) {
+    return false;
+  }
+  // Local/orchestration session keys such as `main` carry no external provider
+  // segment; they only ever reach an external chat by borrowing a
+  // deliveryContext or `/focus` binding, so they are never channel-native.
+  if (rest === "main") {
+    return false;
+  }
+  return deriveSessionChatTypeFromKey(requesterSessionKey) === "direct";
 }
 
 function resolveRequesterSessionActivity(requesterSessionKey: string) {
@@ -412,20 +495,13 @@ export async function resolveSubagentCompletionOrigin(params: {
   // outbound counterpart to the inbound `/focus` routing that already works for
   // interactive turns.
   if (!requesterConversation) {
-    const focusBoundRoute = router.resolveDestination({
-      eventKind: "task_completion",
-      targetSessionKey: params.requesterSessionKey,
-      failClosed: false,
+    const focusBoundOrigin = resolveActiveFocusBindingOrigin({
+      requesterSessionKey: params.requesterSessionKey,
+      requesterOrigin,
+      router,
     });
-    if (focusBoundRoute.mode === "bound" && focusBoundRoute.binding) {
-      return mergeDeliveryContext(
-        resolveBoundConversationOrigin({
-          bindingConversation: focusBoundRoute.binding.conversation,
-          requesterConversation,
-          requesterOrigin,
-        }),
-        requesterOrigin,
-      );
+    if (focusBoundOrigin) {
+      return focusBoundOrigin;
     }
   }
 
@@ -764,10 +840,22 @@ async function sendSubagentAnnounceDirectly(params: {
     // the runtime's automatic final delivery. This makes the "runtime delivers"
     // and "agent sends" paths structurally exclusive, so a DM completion can no
     // longer be double-sent.
+    //
+    // Exception: this deterministic message-tool-only contract is only correct
+    // for *channel-native* DM sessions (whose session key encodes the external
+    // provider + direct chat, e.g. `agent:main:telegram:direct:<peer>`). A
+    // `/focus`-bound local session such as `agent:main:main` only *borrows* the
+    // external channel via its persisted deliveryContext / focus binding; its
+    // parent turn answers completion events inline and relies on the runtime's
+    // normal final delivery (already routed to the focus channel). Forcing
+    // message-tool-only there fails delivery entirely ("completion agent did not
+    // deliver through the message tool"), so fall back to runtime final delivery
+    // for those sessions.
     const subagentDirectMessageCompletionRequiresMessageTool =
       params.expectsCompletionMessage &&
       isSubagentCompletion &&
       deliveryTarget.deliver &&
+      requesterSessionIsChannelNativeDirect(canonicalRequesterSessionKey) &&
       isDirectMessageDeliveryTarget(deliveryTarget, canonicalRequesterSessionKey);
     const requiresMessageToolDelivery =
       completionRouteRequiresMessageToolDelivery ||
