@@ -488,6 +488,57 @@ describe("createInboundDebouncer", () => {
     }
   });
 
+  it("coalesces messages that arrive while a same-key turn is running", async () => {
+    const started: string[] = [];
+    const finished: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    // debounceMs=0 so items dispatch immediately (no coalescing window); this
+    // isolates the "busy turn" coalescing behavior we added.
+    const debouncer = createInboundDebouncer<{ key: string; id: string }>({
+      debounceMs: 0,
+      buildKey: (item) => item.key,
+      onFlush: async (items) => {
+        const ids = items.map((entry) => entry.id).join(",");
+        started.push(ids);
+        if (ids === "1") {
+          await firstGate;
+        }
+        finished.push(ids);
+      },
+    });
+
+    // First message starts its turn and blocks on the gate.
+    const first = debouncer.enqueue({ key: "a", id: "1" });
+    await vi.waitFor(() => {
+      expect(started).toEqual(["1"]);
+    });
+
+    // Three more messages arrive while the first turn is still running. They
+    // must be batched into a single follow-up flush rather than three turns.
+    const rest = Promise.all([
+      debouncer.enqueue({ key: "a", id: "2" }),
+      debouncer.enqueue({ key: "a", id: "3" }),
+      debouncer.enqueue({ key: "a", id: "4" }),
+    ]);
+    await Promise.resolve();
+
+    expect(finished).toStrictEqual([]);
+
+    if (!releaseFirst) {
+      throw new Error("Expected first flush release callback to be initialized");
+    }
+    releaseFirst();
+    await Promise.all([first, rest]);
+
+    // The three messages queued during the busy turn are delivered together.
+    expect(started).toEqual(["1", "2,3,4"]);
+    expect(finished).toEqual(["1", "2,3,4"]);
+  });
+
   it("keeps fire-and-forget keyed work ahead of a later buffered item", async () => {
     const started: string[] = [];
     const finished: string[] = [];

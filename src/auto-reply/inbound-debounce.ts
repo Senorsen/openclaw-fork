@@ -51,6 +51,14 @@ export type InboundDebounceCreateParams<T> = {
   shouldDebounce?: (item: T) => boolean;
   resolveDebounceMs?: (item: T) => number | undefined;
   serializeImmediate?: boolean;
+  /**
+   * When a same-key flush (agent turn) is already running, coalesce all items
+   * that arrive while it runs into a single follow-up flush instead of queuing
+   * one flush per item. This lets the agent see every message a user sent while
+   * it was busy in one combined turn, rather than replaying them one at a time
+   * with a full turn of latency between each. Defaults to true.
+   */
+  coalesceWhileBusy?: boolean;
   onFlush: (items: T[]) => Promise<void>;
   onError?: (err: unknown, items: T[]) => void;
 };
@@ -58,6 +66,11 @@ export type InboundDebounceCreateParams<T> = {
 export function createInboundDebouncer<T>(params: InboundDebounceCreateParams<T>) {
   const buffers = new Map<string, DebounceBuffer<T>>();
   const keyChains = new Map<string, Promise<void>>();
+  // Items accumulated for a key while an earlier same-key flush is still
+  // running. Drained together as a single coalesced flush once the running
+  // flush settles (see enqueueCoalescedKeyTask).
+  const pendingBatches = new Map<string, T[]>();
+  const coalesceWhileBusy = params.coalesceWhileBusy ?? true;
   const defaultDebounceMs = Math.max(0, Math.trunc(params.debounceMs));
   const maxTrackedKeys = Math.max(1, Math.trunc(params.maxTrackedKeys ?? DEFAULT_MAX_TRACKED_KEYS));
 
@@ -94,6 +107,38 @@ export function createInboundDebouncer<T>(params: InboundDebounceCreateParams<T>
     };
     settled.then(cleanup, cleanup);
     return next;
+  };
+
+  // Coalesce items that arrive while an earlier same-key flush is running.
+  //
+  // Instead of chaining one flush per item behind the busy chain (which makes
+  // the agent process buffered messages one turn at a time), we append the item
+  // to a shared pending batch for the key. The first caller to observe an empty
+  // pending batch chains a single "drain" task; every later caller that arrives
+  // before that drain runs simply piggybacks on the same batch. When the drain
+  // finally executes, it flushes every accumulated item together in one turn.
+  const enqueueCoalescedKeyTask = (key: string, item: T): Promise<void> => {
+    const existingBatch = pendingBatches.get(key);
+    if (existingBatch) {
+      existingBatch.push(item);
+      // A drain task is already scheduled behind the running flush; it will pick
+      // up this item when it executes. Return the shared chain tail so callers
+      // still observe backpressure.
+      return keyChains.get(key) ?? Promise.resolve();
+    }
+    const batch: T[] = [item];
+    pendingBatches.set(key, batch);
+    return enqueueKeyTask(key, async () => {
+      // Detach the batch so items arriving during the flush start a fresh batch
+      // and a new drain task rather than joining this one mid-flight.
+      if (pendingBatches.get(key) === batch) {
+        pendingBatches.delete(key);
+      }
+      if (batch.length === 0) {
+        return;
+      }
+      await runFlush(batch);
+    });
   };
 
   const runKeyTaskNow = (key: string, task: () => Promise<void>) => {
@@ -226,6 +271,13 @@ export function createInboundDebouncer<T>(params: InboundDebounceCreateParams<T>
           return;
         }
         if (keyChains.has(key)) {
+          if (coalesceWhileBusy) {
+            // A same-key turn is already running; batch this item with any other
+            // messages that arrive before the running turn finishes so they are
+            // handled together as a single follow-up turn.
+            await enqueueCoalescedKeyTask(key, item);
+            return;
+          }
           await enqueueKeyTask(key, async () => {
             await runFlush([item]);
           });
@@ -254,6 +306,10 @@ export function createInboundDebouncer<T>(params: InboundDebounceCreateParams<T>
     if (!canTrackKey(key)) {
       // When the debounce map is saturated, fall back to immediate keyed work
       // instead of buffering, but still preserve same-key ordering.
+      if (coalesceWhileBusy && keyChains.has(key)) {
+        await enqueueCoalescedKeyTask(key, item);
+        return;
+      }
       await enqueueKeyTask(key, async () => {
         await runFlush([item]);
       });
