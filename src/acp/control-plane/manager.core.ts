@@ -86,6 +86,7 @@ import {
   validateRuntimeOptionPatch,
 } from "./runtime-options.js";
 import { SessionActorQueue } from "./session-actor-queue.js";
+import { SessionTurnCoalescer, type CoalesceEntry } from "./session-turn-coalescer.js";
 
 const ACP_TURN_TIMEOUT_GRACE_MS = 1_000;
 const ACP_TURN_TIMEOUT_CLEANUP_GRACE_MS = 2_000;
@@ -163,6 +164,7 @@ type BackgroundTaskContext = {
 
 export class AcpSessionManager {
   private readonly actorQueue = new SessionActorQueue();
+  private readonly turnCoalescer = new SessionTurnCoalescer();
   private readonly runtimeCache = new RuntimeCache();
   private readonly activeTurnBySession = new Map<string, ActiveTurnState>();
   private readonly turnLatencyStats: TurnLatencyStats = {
@@ -726,9 +728,48 @@ export class AcpSessionManager {
       throw new AcpRuntimeError("ACP_SESSION_INIT_FAILED", "ACP session key is required.");
     }
     await this.evictIdleRuntimeHandles({ cfg: input.cfg });
+
+    // Register this prompt turn for cross-message coalescing. When several
+    // prompt messages pile up on the same session while an earlier turn runs,
+    // the first queued turn to actually start executing absorbs the text of
+    // the others so they are handled in a single agent turn. Non-prompt work
+    // (system/heartbeat/etc.) is never registered and never coalesced.
+    const coalesceActorKey = normalizeActorKey(sessionKey);
+    let coalesceHandle: CoalesceEntry | null = null;
+    if (input.mode === "prompt") {
+      coalesceHandle = this.turnCoalescer.register(coalesceActorKey, {
+        text: input.text,
+        attachments: input.attachments,
+        requestId: input.requestId,
+      });
+    }
+
     await this.withSessionActor(
       sessionKey,
       async () => {
+        // Coalesce point: fold in any same-key prompt turns still waiting.
+        if (coalesceHandle) {
+          const claim = this.turnCoalescer.claim(coalesceActorKey, coalesceHandle);
+          if (!claim.run) {
+            // This turn's payload was already merged into an earlier running
+            // turn. Resolve as a no-op.
+            logVerbose(
+              `acp-manager: coalesced turn skipped for ${sessionKey} req=${input.requestId}`,
+            );
+            return;
+          }
+          if (claim.mergedRequestIds.length > 1) {
+            logVerbose(
+              `acp-manager: coalesced ${claim.mergedRequestIds.length} prompt turns for ` +
+                `${sessionKey} reqs=${claim.mergedRequestIds.join(",")}`,
+            );
+            input = {
+              ...input,
+              text: claim.text,
+              ...(claim.attachments ? { attachments: claim.attachments } : {}),
+            };
+          }
+        }
         const turnStartedAt = Date.now();
         const actorKey = normalizeActorKey(sessionKey);
         const taskContext =
