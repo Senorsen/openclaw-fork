@@ -990,6 +990,8 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
             clientMode: connectParams.client.mode,
             role,
             scopes,
+            caps: connectParams.caps,
+            commands: connectParams.commands,
             remoteIp: reportedClientIp,
           };
           const clientAccessMetadata = {

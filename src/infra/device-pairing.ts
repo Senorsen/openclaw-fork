@@ -34,6 +34,8 @@ export type DevicePairingPendingRequest = {
   role?: string;
   roles?: string[];
   scopes?: string[];
+  caps?: string[];
+  commands?: string[];
   remoteIp?: string;
   silent?: boolean;
   isRepair?: boolean;
@@ -87,6 +89,8 @@ export type PairedDevice = {
   roles?: string[];
   scopes?: string[];
   approvedScopes?: string[];
+  caps?: string[];
+  commands?: string[];
   remoteIp?: string;
   tokens?: Record<string, DeviceAuthToken>;
   createdAtMs: number;
@@ -343,6 +347,8 @@ function refreshPendingDevicePairingRequest(
     deviceFamily: incoming.deviceFamily ?? existing.deviceFamily,
     clientId: incoming.clientId ?? existing.clientId,
     clientMode: incoming.clientMode ?? existing.clientMode,
+    caps: incoming.caps ?? existing.caps,
+    commands: incoming.commands ?? existing.commands,
     remoteIp: incoming.remoteIp ?? existing.remoteIp,
     // If either request is interactive, keep the pending request visible for approval.
     silent: Boolean(existing.silent && incoming.silent),
@@ -382,6 +388,8 @@ function buildPendingDevicePairingRequest(params: {
     role,
     roles: mergeRoles(params.req.roles, role),
     scopes: mergeScopes(params.req.scopes),
+    caps: params.req.caps,
+    commands: params.req.commands,
     remoteIp: params.req.remoteIp,
     silent: params.req.silent,
     isRepair: params.isRepair,
@@ -696,6 +704,8 @@ export async function approveDevicePairing(
       roles,
       scopes: approvedScopes,
       approvedScopes,
+      caps: pending.caps,
+      commands: pending.commands,
       remoteIp: pending.remoteIp,
       tokens,
       createdAtMs: existing?.createdAtMs ?? now,
@@ -785,6 +795,8 @@ export async function approveBootstrapDevicePairing(
       roles,
       scopes: nextApprovedScopes,
       approvedScopes: nextApprovedScopes,
+      caps: pending.caps,
+      commands: pending.commands,
       remoteIp: pending.remoteIp,
       tokens,
       createdAtMs: existing?.createdAtMs ?? now,
