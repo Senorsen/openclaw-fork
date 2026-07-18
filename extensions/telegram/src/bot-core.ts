@@ -43,6 +43,7 @@ import {
 import { resolveTelegramTransport } from "./fetch.js";
 import { stringifyTelegramRawUpdateForLog } from "./raw-update-log.js";
 import {
+  buildSteerPreviewBody,
   buildSteerStopHint,
   formatReceivedAtWithWeekday,
   resolveTelegramReceiveTimezone,
@@ -284,20 +285,37 @@ export function createTelegramBotCore(
       const receivedAtMs =
         typeof msg.date === "number" && msg.date > 0 ? msg.date * 1000 : Date.now();
       const receivedAtText = formatReceivedAtWithWeekday(receivedAtMs, receiveTz);
-      const mediaType = isMediaOnly
+      const mediaKind: "audio" | "image" | "video" | "file" | "media" | undefined = isMediaOnly
         ? msg.voice || msg.audio
-          ? "语音"
+          ? "audio"
           : msg.photo
-            ? "图片"
+            ? "image"
             : msg.video
-              ? "视频"
+              ? "video"
               : msg.document
-                ? "文件"
-                : "媒体"
+                ? "file"
+                : "media"
         : undefined;
+      const senderName =
+        [msg.from?.first_name, msg.from?.last_name]
+          .filter((part): part is string => Boolean(part && part.trim()))
+          .join(" ")
+          .trim() ||
+        msg.from?.username ||
+        "用户";
+      const previewBody = buildSteerPreviewBody({
+        text: rawText,
+        mediaKind,
+      });
       queueAgentHarnessMessage(
         sessionId,
-        buildSteerStopHint({ mediaType, receivedAtText }),
+        buildSteerStopHint({
+          senderName,
+          senderId: msg.from?.id,
+          messageId: msg.message_id,
+          receivedAtText,
+          previewBody,
+        }),
       );
       steerBypassLogger.debug(
         `steer bypass: injected stop hint into active session ${sessionId} ` +

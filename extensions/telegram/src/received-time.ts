@@ -79,18 +79,56 @@ function resolveWeekdayIndexInTimeZone(date: Date, timeZone: string): number {
 }
 
 /**
- * Build the fixed stop signal injected into an active run when a new inbound
- * message arrives. It never carries the user's actual message content — the real
- * message is delivered in order through the follow-up queue on the next turn.
+ * Build the steer stop signal injected into an active run when a new inbound
+ * message arrives. It now carries a lightweight preview (sender, ids, time and
+ * a content marker) so the agent can prioritize the new message. The full,
+ * canonical message is still delivered in order through the follow-up queue on
+ * the next turn; the shared message id lets the agent dedupe against it.
  */
 export function buildSteerStopHint(params: {
-  mediaType?: string;
+  senderName: string;
+  senderId?: string | number;
+  messageId?: string | number;
   receivedAtText: string;
+  /** Preview body: plain text, or a `<media:...>` marker for media messages. */
+  previewBody: string;
 }): string {
-  const kind = params.mediaType ? `新的${params.mediaType}消息` : "新消息";
+  const name = params.senderName.trim() || "用户";
+  const idPart = params.senderId != null && String(params.senderId).trim() ? `（${params.senderId}）` : "";
+  const msgIdText = params.messageId != null && String(params.messageId).trim() ? `#${params.messageId}` : "#未知";
   return (
-    `[系统] 用户于 ${params.receivedAtText} 发来了一条${kind}（这是真正的接收时间，不是当前处理时间）。` +
-    `请立刻停止当前这一轮剩余的所有操作，用一句话简短回复用户（例如「我先暂停一下，马上按顺序处理你的新消息」），然后结束本轮。` +
-    `新消息会由系统在随后按接收顺序自动送达，你无需也不要在这里猜测其内容。`
+    `[系统] ${name}${idPart}于 ${params.receivedAtText} 发来了一条新 steer 消息，请优先响应。` +
+    `注意消息可能略有乱序，这是预览，稍后可能重复出现正式消息，可以根据相同的消息ID（${msgIdText}）避免重复理解；` +
+    `但如果消息时间不同则视为不同消息。\n\n` +
+    `--- 消息预览 ---\n` +
+    `${msgIdText} ${name} ${params.receivedAtText}: ${params.previewBody}`
   );
+}
+
+/**
+ * Build the preview body for a steer message. For text it returns the raw text;
+ * for media it returns a `<media:type>` marker plus a hint that the agent should
+ * inspect the media itself (transcribe audio / view image) once the full message
+ * lands in the follow-up queue.
+ */
+export function buildSteerPreviewBody(params: {
+  text?: string;
+  mediaKind?: "audio" | "image" | "video" | "file" | "media";
+}): string {
+  const text = params.text?.trim();
+  if (text) {
+    return text;
+  }
+  switch (params.mediaKind) {
+    case "audio":
+      return "<media:audio>（语音消息，请在正式消息送达后自行转录查看）";
+    case "image":
+      return "<media:image>（图片消息，请在正式消息送达后自行查看）";
+    case "video":
+      return "<media:video>（视频消息，请在正式消息送达后自行查看）";
+    case "file":
+      return "<media:file>（文件消息，请在正式消息送达后自行查看）";
+    default:
+      return "<media:media>（媒体消息，请在正式消息送达后自行查看）";
+  }
 }
