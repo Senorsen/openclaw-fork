@@ -742,6 +742,7 @@ export class AcpSessionManager {
         attachments: input.attachments,
         requestId: input.requestId,
       });
+      console.log(`[coalesce] REGISTER key=${coalesceActorKey} req=${input.requestId} bufLen=${this.turnCoalescer.getPendingCountForTesting(coalesceActorKey)}`);
     }
 
     await this.withSessionActor(
@@ -750,6 +751,7 @@ export class AcpSessionManager {
         // Coalesce point: fold in any same-key prompt turns still waiting.
         if (coalesceHandle) {
           const claim = this.turnCoalescer.claim(coalesceActorKey, coalesceHandle);
+          console.log(`[coalesce] CLAIM key=${coalesceActorKey} req=${input.requestId} run=${claim.run} merged=${claim.mergedRequestIds.length} ids=${claim.mergedRequestIds.join(",")}`);
           if (!claim.run) {
             // This turn's payload was already merged into an earlier running
             // turn. Resolve as a no-op.
