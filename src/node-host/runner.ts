@@ -246,7 +246,15 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
 
   const cfg = getRuntimeConfig();
   await ensureNodeHostPluginRegistry({ config: cfg, env: process.env });
-  const pluginNodeHost = listRegisteredNodeHostCapsAndCommands();
+  let pluginCaps: string[] = [];
+  let pluginCommands: string[] = [];
+  try {
+    const pluginNodeHost = listRegisteredNodeHostCapsAndCommands();
+    pluginCaps = pluginNodeHost.caps || [];
+    pluginCommands = pluginNodeHost.commands || [];
+  } catch (e) {
+    console.error("[node-host] plugin caps/commands init failed:", e);
+  }
   const { token, password } = await resolveNodeHostGatewayCredentials({
     config: cfg,
     env: process.env,
@@ -272,11 +280,13 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
     mode: GATEWAY_CLIENT_MODES.NODE,
     role: "node",
     scopes: [],
-    caps: ["system", ...pluginNodeHost.caps],
+    caps: ["system", ...pluginCaps],
+    // Debug: log what caps/commands we're sending
+    ...((() => { console.log("[node-host] connect caps=[system," + pluginCaps.join(",") + "] commands=" + NODE_SYSTEM_RUN_COMMANDS.length + "+" + pluginCommands.length); return {}; })()),
     commands: [
       ...NODE_SYSTEM_RUN_COMMANDS,
       ...NODE_EXEC_APPROVALS_COMMANDS,
-      ...pluginNodeHost.commands,
+      ...pluginCommands,
       "file.read",
       "file.write",
       "file.edit",
