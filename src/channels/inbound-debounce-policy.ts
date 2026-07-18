@@ -46,6 +46,7 @@ export function createChannelInboundDebouncer<T>(
   const { cfg: _cfg, channel: _channel, debounceMsOverride: _override, ...rest } = params;
   const debouncer = createInboundDebouncer<T>({
     debounceMs,
+    serializeImmediate: true,
     ...rest,
   });
   return { debounceMs, debouncer };
