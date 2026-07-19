@@ -56,16 +56,20 @@ export function injectTimestamp(message: string, opts?: TimestampInjectionOption
   const now = opts?.now ?? new Date();
   const timezone = opts?.timezone ?? "UTC";
 
-  const formatted = formatZonedTimestamp(now, { timeZone: timezone });
+  const formatted = formatZonedTimestamp(now, { timeZone: timezone, displaySeconds: true });
   if (!formatted) {
     return message;
   }
 
-  // 3-letter DOW: small models (8B) can't reliably derive day-of-week from
-  // a date, and may treat a bare "Wed" as a typo. Costs ~1 token.
-  const dow = new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short" }).format(
-    now,
-  );
+  // Chinese weekday: small models can't reliably derive day-of-week from a
+  // date. Derive DOW in the target timezone, then map to a Chinese label.
+  const CN_WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
+  const dowShort = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+  }).format(now);
+  const dowIdx = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(dowShort);
+  const dow = dowIdx >= 0 ? CN_WEEKDAYS[dowIdx] : dowShort;
 
   return `[${dow} ${formatted}] ${message}`;
 }

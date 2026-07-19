@@ -14,7 +14,8 @@
  * do not show AI-facing envelope metadata as user text.
  */
 
-const LEADING_TIMESTAMP_PREFIX_RE = /^\[[A-Za-z]{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}[^\]]*\] */;
+const LEADING_TIMESTAMP_PREFIX_RE =
+  /^\[(?:[A-Za-z]{3}|\u5468[\u65e5\u4e00\u4e8c\u4e09\u56db\u4e94\u516d]) \d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?[^\]]*\] */;
 
 /**
  * Sentinel strings that identify the start of an injected metadata block.

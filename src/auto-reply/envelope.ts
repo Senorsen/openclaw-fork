@@ -123,18 +123,27 @@ export function formatEnvelopeTimestamp(
   }
   const zone = resolveEnvelopeTimezone(resolved);
   // Include a weekday prefix so models do not need to derive DOW from the date
-  // (small models are notoriously unreliable at that).
+  // (small models are notoriously unreliable at that). Use Chinese weekday labels.
+  const CN_WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
   const weekday = (() => {
     try {
-      if (zone.mode === "utc") {
-        return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short" }).format(date);
-      }
-      if (zone.mode === "local") {
-        return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date);
-      }
-      return new Intl.DateTimeFormat("en-US", { timeZone: zone.timeZone, weekday: "short" }).format(
-        date,
-      );
+      // Derive the day-of-week in the target timezone to avoid host-locale drift.
+      const weekdayName = (() => {
+        if (zone.mode === "utc") {
+          return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short" }).format(
+            date,
+          );
+        }
+        if (zone.mode === "local") {
+          return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date);
+        }
+        return new Intl.DateTimeFormat("en-US", {
+          timeZone: zone.timeZone,
+          weekday: "short",
+        }).format(date);
+      })();
+      const idx = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekdayName);
+      return idx >= 0 ? CN_WEEKDAYS[idx] : undefined;
     } catch {
       return undefined;
     }
@@ -142,10 +151,10 @@ export function formatEnvelopeTimestamp(
 
   const formatted =
     zone.mode === "utc"
-      ? formatUtcTimestamp(date)
+      ? formatUtcTimestamp(date, { displaySeconds: true })
       : zone.mode === "local"
-        ? formatZonedTimestamp(date)
-        : formatZonedTimestamp(date, { timeZone: zone.timeZone });
+        ? formatZonedTimestamp(date, { displaySeconds: true })
+        : formatZonedTimestamp(date, { timeZone: zone.timeZone, displaySeconds: true });
 
   if (!formatted) {
     return undefined;

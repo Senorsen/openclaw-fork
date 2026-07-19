@@ -1072,7 +1072,7 @@ describe("gateway agent handler", () => {
     );
 
     const callArgs = await waitForAgentCommandCall<{ message?: string }>();
-    expect(callArgs.message).toBe("[Wed 2026-01-28 20:30 EST] Is it the weekend?");
+    expect(callArgs.message).toBe("[周三 2026-01-28 20:30:00 EST] Is it the weekend?");
 
     resetTimeConfig();
   });
@@ -1100,7 +1100,7 @@ describe("gateway agent handler", () => {
     expect(callArgs.message).toMatch(/^\[Inter-session message\]/);
     expect(callArgs.message).toContain("isUser=false");
     expect(callArgs.message).toContain("forwarded reply");
-    expect(callArgs.message).not.toContain("[Wed 2026-01-28 20:30 EST]");
+    expect(callArgs.message).not.toContain("[周三 2026-01-28 20:30:00 EST]");
 
     resetTimeConfig();
   });
@@ -3182,7 +3182,7 @@ describe("gateway agent handler", () => {
       },
     );
 
-    const call = await expectResetCall("[Wed 2026-01-28 20:30 EST] check status");
+    const call = await expectResetCall("[周三 2026-01-28 20:30:00 EST] check status");
     expect(call?.sessionId).toBe("reset-session-id");
 
     resetTimeConfig();

@@ -426,7 +426,7 @@ describe("buildInboundUserContextPrefix", () => {
     );
 
     const conversationInfo = parseConversationInfoPayload(text);
-    expect(conversationInfo["timestamp"]).toBe("Sun 2026-02-15T13:35Z");
+    expect(conversationInfo["timestamp"]).toBe("周日 2026-02-15T13:35:00Z");
   });
 
   it("honors envelope user timezone for conversation timestamps", () => {
@@ -444,7 +444,7 @@ describe("buildInboundUserContextPrefix", () => {
       );
 
       const conversationInfo = parseConversationInfoPayload(text);
-      expect(conversationInfo["timestamp"]).toBe("Thu 2026-03-19 09:00 GMT+9");
+      expect(conversationInfo["timestamp"]).toBe("周四 2026-03-19 09:00:00 GMT+9");
     });
   });
 

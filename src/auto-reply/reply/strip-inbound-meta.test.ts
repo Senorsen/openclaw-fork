@@ -177,6 +177,14 @@ describe("timestamp prefix stripping", () => {
     expect(stripInboundMetadata("[Wed 2026-03-11 23:51 PDT] hello")).toBe("hello");
   });
 
+  it("strips a Chinese weekday timestamp prefix with seconds", () => {
+    expect(stripInboundMetadata("[周三 2026-03-11 23:51:36 PDT] hello")).toBe("hello");
+  });
+
+  it("strips a Chinese weekday timestamp prefix with GMT offset", () => {
+    expect(stripInboundMetadata("[周日 2026-07-19 00:18:36 GMT+8] hello")).toBe("hello");
+  });
+
   it("strips timestamp prefix with UTC timezone", () => {
     expect(stripInboundMetadata("[Thu 2026-03-12 07:00 UTC] what time is it?")).toBe(
       "what time is it?",
