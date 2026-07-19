@@ -103,7 +103,7 @@ export function buildSteerStopHint(params: {
     `\n⚠️ 如果预览包含语音/图片且已下载到本地，必须立即转录/查看并处理，不要等正式消息。\n\n` +
     `--- 消息预览 ---\n` +
     `${msgIdText} ${name} ${params.receivedAtText}: ${params.previewBody}` +
-    (params.previewBody.includes("请在正式消息送达后")
+    (params.previewBody.includes("未能预下载")
       ? "\n⚠️ 语音/媒体未能预下载，必须立即停止当前操作（包括 exec poll/sleep 等阻塞调用），让正式消息能够送达。不要继续做任何耗时操作。"
       : "")
   );
