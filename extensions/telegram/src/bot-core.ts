@@ -508,6 +508,18 @@ export function createTelegramBotCore(
         filePath: steerMediaPath,
         transcript: steerAudioTranscript,
       });
+      // Determine whether the preview already contains the full message content.
+      // Text messages: raw text present and non-trivial.
+      // Audio: downloaded + transcribed and non-trivial.
+      // Image/video/file: downloaded locally.
+      // Only skip the follow-up queue when there is genuine content (>5 chars)
+      // so a very short or empty preview never silently drops the real message.
+      const rawTextTrimmed = rawText?.trim() ?? "";
+      const transcriptTrimmed = steerAudioTranscript?.trim() ?? "";
+      const previewComplete: boolean =
+        (rawTextTrimmed.length > 5) ||
+        (mediaKind === "audio" && !!steerMediaPath && transcriptTrimmed.length > 5) ||
+        (mediaKind !== undefined && mediaKind !== "audio" && !!steerMediaPath);
       queueAgentHarnessMessage(
         sessionId,
         buildSteerStopHint({
@@ -516,15 +528,21 @@ export function createTelegramBotCore(
           messageId: msg.message_id,
           receivedAtText,
           previewBody,
+          previewComplete,
         }),
       );
       steerBypassLogger.debug(
         `steer bypass: injected stop hint into active session ${sessionId} ` +
-          `(chat=${chatId}, media=${isMediaOnly}, receivedAt=${receivedAtText})`,
+          `(chat=${chatId}, media=${isMediaOnly}, receivedAt=${receivedAtText}, previewComplete=${previewComplete})`,
       );
-      // Let the real message go through the normal pipeline (sequentialize +
-      // follow-up queue). Multiple messages arriving during the busy turn batch
-      // together in the queue instead of being steered one-by-one.
+      if (previewComplete) {
+        // Preview has full content — drop the formal message from the follow-up
+        // queue to avoid duplicate processing.
+        return;
+      }
+      // Preview is incomplete (media not downloaded). Let the real message go
+      // through the normal pipeline (sequentialize + follow-up queue) so the
+      // agent can handle it once it arrives.
       return next();
     } catch (err) {
       steerBypassLogger.debug(

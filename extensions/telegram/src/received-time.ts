@@ -92,20 +92,33 @@ export function buildSteerStopHint(params: {
   receivedAtText: string;
   /** Preview body: plain text, or a `<media:...>` marker for media messages. */
   previewBody: string;
+  /**
+   * Whether the preview already contains the full message content (raw text
+   * present, audio transcribed, or media downloaded). When true, the formal
+   * message has been dropped from the follow-up queue so no dedup is needed;
+   * the hint text is simplified accordingly. When false (media not downloaded),
+   * the warning to stop blocking operations is retained.
+   */
+  previewComplete?: boolean;
 }): string {
   const name = params.senderName.trim() || "用户";
   const idPart = params.senderId != null && String(params.senderId).trim() ? `(${params.senderId})` : "";
   const msgIdText = params.messageId != null && String(params.messageId).trim() ? `#${params.messageId}` : "#未知";
+  if (params.previewComplete) {
+    return (
+      `[系统] ${name}${idPart}于 ${params.receivedAtText} 发来了一条新消息，请立刻处理。` +
+      `（消息ID：${msgIdText}，如正式消息仍进入队列可凭此ID去重）\n\n` +
+      `--- 消息内容 ---\n` +
+      `${msgIdText} ${name} ${params.receivedAtText}: ${params.previewBody}`
+    );
+  }
   return (
     `[系统] ${name}${idPart}于 ${params.receivedAtText} 发来了一条新 steer 消息，请优先响应。` +
     `注意消息可能略有乱序，这是预览，稍后可能重复出现正式消息，可以根据相同的消息ID（${msgIdText}）避免重复理解；` +
     `但如果消息时间不同则视为不同消息。` +
-    `\n⚠️ 如果预览包含语音/图片且已下载到本地，必须立即转录/查看并处理，不要等正式消息。\n\n` +
+    `\n⚠️ 语音/媒体未能预下载，必须立即停止当前操作（包括 exec poll/sleep 等阻塞调用），让正式消息能够送达。不要继续做任何耗时操作。\n\n` +
     `--- 消息预览 ---\n` +
-    `${msgIdText} ${name} ${params.receivedAtText}: ${params.previewBody}` +
-    (params.previewBody.includes("未能预下载")
-      ? "\n⚠️ 语音/媒体未能预下载，必须立即停止当前操作（包括 exec poll/sleep 等阻塞调用），让正式消息能够送达。不要继续做任何耗时操作。"
-      : "")
+    `${msgIdText} ${name} ${params.receivedAtText}: ${params.previewBody}`
   );
 }
 
