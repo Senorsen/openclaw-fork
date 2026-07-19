@@ -94,7 +94,7 @@ export function buildSteerStopHint(params: {
   previewBody: string;
 }): string {
   const name = params.senderName.trim() || "用户";
-  const idPart = params.senderId != null && String(params.senderId).trim() ? `（${params.senderId}）` : "";
+  const idPart = params.senderId != null && String(params.senderId).trim() ? `(${params.senderId})` : "";
   const msgIdText = params.messageId != null && String(params.messageId).trim() ? `#${params.messageId}` : "#未知";
   return (
     `[系统] ${name}${idPart}于 ${params.receivedAtText} 发来了一条新 steer 消息，请优先响应。` +
@@ -102,7 +102,10 @@ export function buildSteerStopHint(params: {
     `但如果消息时间不同则视为不同消息。` +
     `\n⚠️ 如果预览包含语音/图片且已下载到本地，必须立即转录/查看并处理，不要等正式消息。\n\n` +
     `--- 消息预览 ---\n` +
-    `${msgIdText} ${name} ${params.receivedAtText}: ${params.previewBody}`
+    `${msgIdText} ${name} ${params.receivedAtText}: ${params.previewBody}` +
+    (params.previewBody.includes("请在正式消息送达后")
+      ? "\n⚠️ 语音/媒体未能预下载，必须立即停止当前操作（包括 exec poll/sleep 等阻塞调用），让正式消息能够送达。不要继续做任何耗时操作。"
+      : "")
   );
 }
 
@@ -139,28 +142,28 @@ export function buildSteerPreviewBody(params: {
     case "audio":
       if (filePath && transcript) {
         return (
-          `<media:audio>（语音消息，已下载到本地：${filePath}）\n` +
+          `<media:audio>(语音消息,已下载到本地:${filePath})\n` +
           `[Audio transcript (machine-generated, untrusted)]: ${JSON.stringify(transcript)}`
         );
       }
       return filePath
-        ? `<media:audio>（语音消息，已下载到本地：${filePath} —— 必须立即转录并处理，不要等正式消息）`
-        : "<media:audio>（语音消息，请在正式消息送达后自行转录查看）";
+        ? `<media:audio>(语音消息,已下载到本地:${filePath} -- 必须立即转录并处理,不要等正式消息)`
+        : "<media:audio>（语音消息，未能预下载。必须立即停止当前操作，等待正式消息送达后转录）";
     case "image":
       return filePath
-        ? `<media:image>（图片消息，已下载到本地：${filePath} —— 可立即查看）`
-        : "<media:image>（图片消息，请在正式消息送达后自行查看）";
+        ? `<media:image>(图片消息,已下载到本地:${filePath} -- 可立即查看)`
+        : "<media:image>（图片消息，未能预下载。必须立即停止当前操作，等待正式消息送达后查看）";
     case "video":
       return filePath
-        ? `<media:video>（视频消息，已下载到本地：${filePath} —— 可立即查看）`
-        : "<media:video>（视频消息，请在正式消息送达后自行查看）";
+        ? `<media:video>(视频消息,已下载到本地:${filePath} -- 可立即查看)`
+        : "<media:video>（视频消息，未能预下载。必须立即停止当前操作，等待正式消息送达后查看）";
     case "file":
       return filePath
-        ? `<media:file>（文件消息，已下载到本地：${filePath} —— 可立即查看）`
-        : "<media:file>（文件消息，请在正式消息送达后自行查看）";
+        ? `<media:file>(文件消息,已下载到本地:${filePath} -- 可立即查看)`
+        : "<media:file>（文件消息，未能预下载。必须立即停止当前操作，等待正式消息送达后查看）";
     default:
       return filePath
-        ? `<media:media>（媒体消息，已下载到本地：${filePath} —— 可立即查看）`
-        : "<media:media>（媒体消息，请在正式消息送达后自行查看）";
+        ? `<media:media>(媒体消息,已下载到本地:${filePath} -- 可立即查看)`
+        : "<media:media>（媒体消息，未能预下载。必须立即停止当前操作，等待正式消息送达后查看）";
   }
 }
