@@ -99,7 +99,8 @@ export function buildSteerStopHint(params: {
   return (
     `[系统] ${name}${idPart}于 ${params.receivedAtText} 发来了一条新 steer 消息，请优先响应。` +
     `注意消息可能略有乱序，这是预览，稍后可能重复出现正式消息，可以根据相同的消息ID（${msgIdText}）避免重复理解；` +
-    `但如果消息时间不同则视为不同消息。\n\n` +
+    `但如果消息时间不同则视为不同消息。` +
+    `\n⚠️ 如果预览包含语音/图片且已下载到本地，必须立即转录/查看并处理，不要等正式消息。\n\n` +
     `--- 消息预览 ---\n` +
     `${msgIdText} ${name} ${params.receivedAtText}: ${params.previewBody}`
   );
@@ -129,7 +130,7 @@ export function buildSteerPreviewBody(params: {
   switch (params.mediaKind) {
     case "audio":
       return filePath
-        ? `<media:audio>（语音消息，已下载到本地：${filePath} —— 可立即转录查看）`
+        ? `<media:audio>（语音消息，已下载到本地：${filePath} —— 必须立即转录并处理，不要等正式消息）`
         : "<media:audio>（语音消息，请在正式消息送达后自行转录查看）";
     case "image":
       return filePath
