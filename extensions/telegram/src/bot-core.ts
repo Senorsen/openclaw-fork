@@ -40,7 +40,8 @@ import {
   resolveTelegramClientTimeoutSeconds,
   resolveTelegramOutboundClientTimeoutFloorSeconds,
 } from "./client-fetch.js";
-import { resolveTelegramTransport } from "./fetch.js";
+import { resolveTelegramApiBase, resolveTelegramTransport } from "./fetch.js";
+import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
 import { stringifyTelegramRawUpdateForLog } from "./raw-update-log.js";
 import {
   buildSteerPreviewBody,
@@ -109,6 +110,82 @@ const DEFAULT_TELEGRAM_BOT_RUNTIME: TelegramBotRuntime = {
 const TELEGRAM_TYPING_COALESCE_MS = 4_000;
 
 let telegramBotRuntimeForTest: TelegramBotRuntime | undefined;
+
+/** Max time to spend downloading a steer-preview media file before falling back. */
+const STEER_PREVIEW_DOWNLOAD_TIMEOUT_MS = 5_000;
+/** Cap steer-preview downloads so a huge file never stalls the injection path. */
+const STEER_PREVIEW_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Best-effort download of the steer message's media file to the shared inbound
+ * media directory (same store the canonical pipeline uses), returning the local
+ * absolute path. Bounded by a hard timeout and size cap; any failure resolves to
+ * `undefined` so the steer injection degrades to a type-only marker.
+ */
+async function downloadSteerPreviewMedia(params: {
+  fileId: string;
+  telegramFileName?: string;
+  mimeType?: string;
+  token: string;
+  apiRoot?: string;
+  transport: ReturnType<typeof resolveTelegramTransport>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getFile: (fileId: string) => Promise<any>;
+}): Promise<string | undefined> {
+  const withTimeout = async <T>(work: Promise<T>): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("steer preview media download timed out")),
+            STEER_PREVIEW_DOWNLOAD_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  };
+
+  try {
+    return await withTimeout(
+      (async () => {
+        const file = await params.getFile(params.fileId);
+        const filePath: string | undefined = file?.file_path;
+        if (!filePath) {
+          return undefined;
+        }
+        const apiBase = resolveTelegramApiBase(params.apiRoot);
+        const url = `${apiBase}/file/bot${params.token}/${filePath}`;
+        const res = await params.transport.sourceFetch(url);
+        if (!res.ok || !res.body) {
+          return undefined;
+        }
+        const arrayBuffer = await res.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        if (buffer.byteLength > STEER_PREVIEW_MAX_BYTES) {
+          return undefined;
+        }
+        const saved = await saveMediaBuffer(
+          buffer,
+          params.mimeType,
+          "inbound",
+          STEER_PREVIEW_MAX_BYTES,
+          params.telegramFileName,
+          filePath,
+        );
+        return saved.path;
+      })(),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 
 export function setTelegramBotRuntimeForTest(runtime?: TelegramBotRuntime): void {
   telegramBotRuntimeForTest = runtime;
@@ -296,6 +373,43 @@ export function createTelegramBotCore(
                 ? "file"
                 : "media"
         : undefined;
+      // For media-only steer messages, best-effort download the file to the
+      // shared inbound media store so the agent can transcribe/view it right
+      // away. Bounded by a hard timeout; any failure degrades to a type marker.
+      let steerMediaPath: string | undefined;
+      if (isMediaOnly && mediaKind && mediaKind !== "media") {
+        const photo = msg.photo && msg.photo.length ? msg.photo[msg.photo.length - 1] : undefined;
+        const mediaSource =
+          msg.voice ??
+          msg.audio ??
+          photo ??
+          msg.video ??
+          msg.document ??
+          undefined;
+        const fileId: string | undefined = mediaSource?.file_id;
+        if (fileId) {
+          const telegramFileName =
+            (msg.audio?.file_name as string | undefined) ??
+            (msg.document?.file_name as string | undefined) ??
+            (msg.video?.file_name as string | undefined) ??
+            undefined;
+          const mimeType =
+            (msg.voice?.mime_type as string | undefined) ??
+            (msg.audio?.mime_type as string | undefined) ??
+            (msg.video?.mime_type as string | undefined) ??
+            (msg.document?.mime_type as string | undefined) ??
+            (mediaKind === "image" ? "image/jpeg" : undefined);
+          steerMediaPath = await downloadSteerPreviewMedia({
+            fileId,
+            telegramFileName,
+            mimeType,
+            token: opts.token,
+            apiRoot: normalizedApiRoot,
+            transport: telegramTransport,
+            getFile: (id) => ctx.api.getFile(id),
+          });
+        }
+      }
       const senderName =
         [msg.from?.first_name, msg.from?.last_name]
           .filter((part): part is string => Boolean(part && part.trim()))
@@ -306,6 +420,7 @@ export function createTelegramBotCore(
       const previewBody = buildSteerPreviewBody({
         text: rawText,
         mediaKind,
+        filePath: steerMediaPath,
       });
       queueAgentHarnessMessage(
         sessionId,

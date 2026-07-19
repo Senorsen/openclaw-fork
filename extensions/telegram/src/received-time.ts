@@ -114,21 +114,38 @@ export function buildSteerStopHint(params: {
 export function buildSteerPreviewBody(params: {
   text?: string;
   mediaKind?: "audio" | "image" | "video" | "file" | "media";
+  /**
+   * Local absolute path to the media that was pre-downloaded for this steer
+   * preview. When present, the agent can transcribe/view the file immediately
+   * instead of waiting for the follow-up queue to deliver the full message.
+   */
+  filePath?: string;
 }): string {
   const text = params.text?.trim();
   if (text) {
     return text;
   }
+  const filePath = params.filePath?.trim();
   switch (params.mediaKind) {
     case "audio":
-      return "<media:audio>（语音消息，请在正式消息送达后自行转录查看）";
+      return filePath
+        ? `<media:audio>（语音消息，已下载到本地：${filePath} —— 可立即转录查看）`
+        : "<media:audio>（语音消息，请在正式消息送达后自行转录查看）";
     case "image":
-      return "<media:image>（图片消息，请在正式消息送达后自行查看）";
+      return filePath
+        ? `<media:image>（图片消息，已下载到本地：${filePath} —— 可立即查看）`
+        : "<media:image>（图片消息，请在正式消息送达后自行查看）";
     case "video":
-      return "<media:video>（视频消息，请在正式消息送达后自行查看）";
+      return filePath
+        ? `<media:video>（视频消息，已下载到本地：${filePath} —— 可立即查看）`
+        : "<media:video>（视频消息，请在正式消息送达后自行查看）";
     case "file":
-      return "<media:file>（文件消息，请在正式消息送达后自行查看）";
+      return filePath
+        ? `<media:file>（文件消息，已下载到本地：${filePath} —— 可立即查看）`
+        : "<media:file>（文件消息，请在正式消息送达后自行查看）";
     default:
-      return "<media:media>（媒体消息，请在正式消息送达后自行查看）";
+      return filePath
+        ? `<media:media>（媒体消息，已下载到本地：${filePath} —— 可立即查看）`
+        : "<media:media>（媒体消息，请在正式消息送达后自行查看）";
   }
 }
