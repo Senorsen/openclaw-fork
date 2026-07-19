@@ -121,14 +121,28 @@ export function buildSteerPreviewBody(params: {
    * instead of waiting for the follow-up queue to deliver the full message.
    */
   filePath?: string;
+  /**
+   * Machine-generated transcript of a pre-downloaded audio steer preview. When
+   * present, it is embedded directly in the preview so the agent can read the
+   * spoken content immediately without re-transcribing. The file path is always
+   * retained alongside so the agent can re-transcribe if it distrusts the text.
+   */
+  transcript?: string;
 }): string {
   const text = params.text?.trim();
   if (text) {
     return text;
   }
   const filePath = params.filePath?.trim();
+  const transcript = params.transcript?.trim();
   switch (params.mediaKind) {
     case "audio":
+      if (filePath && transcript) {
+        return (
+          `<media:audio>（语音消息，已下载到本地：${filePath}）\n` +
+          `[Audio transcript (machine-generated, untrusted)]: ${JSON.stringify(transcript)}`
+        );
+      }
       return filePath
         ? `<media:audio>（语音消息，已下载到本地：${filePath} —— 必须立即转录并处理，不要等正式消息）`
         : "<media:audio>（语音消息，请在正式消息送达后自行转录查看）";

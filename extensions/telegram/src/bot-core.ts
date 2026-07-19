@@ -42,6 +42,8 @@ import {
 } from "./client-fetch.js";
 import { resolveTelegramApiBase, resolveTelegramTransport } from "./fetch.js";
 import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
+import type { MsgContext } from "openclaw/plugin-sdk/reply-runtime";
+import { transcribeFirstAudio } from "./media-understanding.runtime.js";
 import { stringifyTelegramRawUpdateForLog } from "./raw-update-log.js";
 import {
   buildSteerPreviewBody,
@@ -186,6 +188,69 @@ async function downloadSteerPreviewMedia(params: {
   }
 }
 
+/** Max time to spend transcribing a steer-preview audio file before falling back. */
+const STEER_PREVIEW_TRANSCRIBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Best-effort transcription of a pre-downloaded steer-preview audio file, reusing
+ * the same media-understanding pipeline the canonical inbound path uses. Bounded
+ * by a hard timeout so a slow provider never stalls the steer injection; any
+ * failure or timeout resolves to `undefined` so the preview degrades to the
+ * "downloaded locally" hint (the agent can still transcribe from the path).
+ */
+async function transcribeSteerPreviewAudio(params: {
+  filePath: string;
+  mimeType?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  cfg: any;
+  accountId?: string;
+  originatingTo?: string;
+  messageThreadId?: number;
+}): Promise<string | undefined> {
+  const withTimeout = async <T>(work: Promise<T>): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("steer preview audio transcription timed out")),
+            STEER_PREVIEW_TRANSCRIBE_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  };
+
+  try {
+    const tempCtx: MsgContext = {
+      Provider: "telegram",
+      Surface: "telegram",
+      OriginatingChannel: "telegram",
+      OriginatingTo: params.originatingTo,
+      AccountId: params.accountId,
+      MessageThreadId: params.messageThreadId,
+      MediaPaths: [params.filePath],
+      MediaTypes: params.mimeType ? [params.mimeType] : undefined,
+    };
+    const transcript = await withTimeout(
+      transcribeFirstAudio({
+        ctx: tempCtx,
+        cfg: params.cfg,
+        agentDir: undefined,
+      }),
+    );
+    const trimmed = typeof transcript === "string" ? transcript.trim() : undefined;
+    return trimmed ? trimmed : undefined;
+  } catch (err) {
+    logVerbose(`telegram: steer preview audio transcription failed: ${String(err)}`);
+    return undefined;
+  }
+}
 
 export function setTelegramBotRuntimeForTest(runtime?: TelegramBotRuntime): void {
   telegramBotRuntimeForTest = runtime;
@@ -377,6 +442,7 @@ export function createTelegramBotCore(
       // shared inbound media store so the agent can transcribe/view it right
       // away. Bounded by a hard timeout; any failure degrades to a type marker.
       let steerMediaPath: string | undefined;
+      let steerMediaMime: string | undefined;
       if (isMediaOnly && mediaKind && mediaKind !== "media") {
         const photo = msg.photo && msg.photo.length ? msg.photo[msg.photo.length - 1] : undefined;
         const mediaSource =
@@ -399,6 +465,7 @@ export function createTelegramBotCore(
             (msg.video?.mime_type as string | undefined) ??
             (msg.document?.mime_type as string | undefined) ??
             (mediaKind === "image" ? "image/jpeg" : undefined);
+          steerMediaMime = mimeType;
           steerMediaPath = await downloadSteerPreviewMedia({
             fileId,
             telegramFileName,
@@ -409,6 +476,24 @@ export function createTelegramBotCore(
             getFile: (id) => ctx.api.getFile(id),
           });
         }
+      }
+      // For voice/audio steer previews, best-effort transcribe the downloaded
+      // file immediately (reusing the canonical media-understanding pipeline) so
+      // the agent sees the actual words in the preview without waiting for the
+      // follow-up queue. Bounded by a hard timeout; on failure/timeout we fall
+      // back to the "downloaded locally" hint and the agent can retranscribe from
+      // the retained file path.
+      let steerAudioTranscript: string | undefined;
+      if (mediaKind === "audio" && steerMediaPath) {
+        const messageThreadId =
+          typeof msg.message_thread_id === "number" ? msg.message_thread_id : undefined;
+        steerAudioTranscript = await transcribeSteerPreviewAudio({
+          filePath: steerMediaPath,
+          mimeType: steerMediaMime,
+          cfg,
+          accountId: account.accountId,
+          messageThreadId,
+        });
       }
       const senderName =
         [msg.from?.first_name, msg.from?.last_name]
@@ -421,6 +506,7 @@ export function createTelegramBotCore(
         text: rawText,
         mediaKind,
         filePath: steerMediaPath,
+        transcript: steerAudioTranscript,
       });
       queueAgentHarnessMessage(
         sessionId,
