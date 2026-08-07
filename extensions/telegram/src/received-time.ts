@@ -146,12 +146,22 @@ export function buildSteerPreviewBody(params: {
   transcript?: string;
 }): string {
   const text = params.text?.trim();
-  if (text) {
+  if (text && params.mediaKind === undefined) {
     return text;
   }
   const filePath = params.filePath?.trim();
   const transcript = params.transcript?.trim();
-  switch (params.mediaKind) {
+  const prefix = text ? `${text}\n` : "";
+  return prefix + buildSteerMediaMarker(params.mediaKind, filePath, transcript);
+}
+
+/** Media marker portion of a steer preview body. */
+function buildSteerMediaMarker(
+  mediaKind: "audio" | "image" | "video" | "file" | "media" | undefined,
+  filePath: string | undefined,
+  transcript: string | undefined,
+): string {
+  switch (mediaKind) {
     case "audio":
       if (filePath && transcript) {
         return (
@@ -179,4 +189,34 @@ export function buildSteerPreviewBody(params: {
         ? `<media:media>(媒体消息,已下载到本地:${filePath} -- 可立即查看)`
         : "<media:media>（媒体消息，未能预下载。必须立即停止当前操作，等待正式消息送达后查看）";
   }
+}
+
+/**
+ * Whether a steer preview already carries the *entire* message content, so the
+ * formal follow-up message can safely be dropped.
+ *
+ * Critical: when the message carries media, text completeness alone is NOT
+ * enough — a caption longer than the threshold must never make a media message
+ * look complete, otherwise the attachment is lost forever (the local file path
+ * only exists once the media has been pre-downloaded).
+ */
+export function isSteerPreviewComplete(params: {
+  rawText?: string;
+  mediaKind?: "audio" | "image" | "video" | "file" | "media";
+  /** Local path of the pre-downloaded media, when the download succeeded. */
+  steerMediaPath?: string;
+  /** Transcript produced for a pre-downloaded audio steer preview. */
+  transcript?: string;
+}): boolean {
+  const MIN_CONTENT_CHARS = 5;
+  const rawTextTrimmed = params.rawText?.trim() ?? "";
+  const transcriptTrimmed = params.transcript?.trim() ?? "";
+  const hasMediaPath = Boolean(params.steerMediaPath?.trim());
+  if (params.mediaKind === undefined) {
+    return rawTextTrimmed.length > MIN_CONTENT_CHARS;
+  }
+  if (params.mediaKind === "audio") {
+    return hasMediaPath && transcriptTrimmed.length > MIN_CONTENT_CHARS;
+  }
+  return hasMediaPath;
 }

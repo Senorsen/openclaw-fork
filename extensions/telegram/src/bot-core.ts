@@ -49,6 +49,7 @@ import {
   buildSteerPreviewBody,
   buildSteerStopHint,
   formatReceivedAtWithWeekday,
+  isSteerPreviewComplete,
   resolveTelegramReceiveTimezone,
 } from "./received-time.js";
 import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
@@ -514,12 +515,15 @@ export function createTelegramBotCore(
       // Image/video/file: downloaded locally.
       // Only skip the follow-up queue when there is genuine content (>5 chars)
       // so a very short or empty preview never silently drops the real message.
-      const rawTextTrimmed = rawText?.trim() ?? "";
-      const transcriptTrimmed = steerAudioTranscript?.trim() ?? "";
-      const previewComplete: boolean =
-        (rawTextTrimmed.length > 5) ||
-        (mediaKind === "audio" && !!steerMediaPath && transcriptTrimmed.length > 5) ||
-        (mediaKind !== undefined && mediaKind !== "audio" && !!steerMediaPath);
+      // NOTE: when media is present, a long caption must NOT be enough on its
+      // own — otherwise the formal message (which carries the attachment) gets
+      // dropped and the file is lost forever.
+      const previewComplete: boolean = isSteerPreviewComplete({
+        rawText,
+        mediaKind,
+        steerMediaPath,
+        transcript: steerAudioTranscript,
+      });
       queueAgentHarnessMessage(
         sessionId,
         buildSteerStopHint({
