@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSteerPreviewBody, isSteerPreviewComplete } from "./received-time.js";
+import {
+  buildSteerPreviewBody,
+  isSteerPreviewComplete,
+  resolveSteerMediaKind,
+} from "./received-time.js";
 
 describe("isSteerPreviewComplete", () => {
   it("treats a long text-only message as complete", () => {
@@ -99,5 +103,52 @@ describe("buildSteerPreviewBody with caption", () => {
 
   it("returns plain text for text-only messages", () => {
     expect(buildSteerPreviewBody({ text: "纯文字消息" })).toBe("纯文字消息");
+  });
+});
+
+describe("resolveSteerMediaKind", () => {
+  it("classifies a document even when a caption is present", () => {
+    // Regression: captioned documents used to resolve to `undefined`, which
+    // skipped the pre-download and let the caption mark the preview complete.
+    expect(resolveSteerMediaKind({ document: { file_id: "a" } })).toBe("file");
+  });
+
+  it("classifies photo/voice/audio/video", () => {
+    expect(resolveSteerMediaKind({ photo: [{ file_id: "a" }] })).toBe("image");
+    expect(resolveSteerMediaKind({ voice: { file_id: "a" } })).toBe("audio");
+    expect(resolveSteerMediaKind({ audio: { file_id: "a" } })).toBe("audio");
+    expect(resolveSteerMediaKind({ video: { file_id: "a" } })).toBe("video");
+  });
+
+  it("returns undefined for text-only messages", () => {
+    expect(resolveSteerMediaKind({})).toBe(undefined);
+    expect(resolveSteerMediaKind(undefined)).toBe(undefined);
+    expect(resolveSteerMediaKind({ photo: [] })).toBe(undefined);
+  });
+});
+
+describe("captioned document steer preview", () => {
+  it("is incomplete when the pre-download failed, so the formal message must requeue", () => {
+    const mediaKind = resolveSteerMediaKind({ document: { file_id: "a" } });
+    expect(
+      isSteerPreviewComplete({ rawText: "帮我看看这个 jsonl 文件", mediaKind }),
+    ).toBe(false);
+  });
+
+  it("is complete and exposes the local path when the pre-download succeeded", () => {
+    const mediaKind = resolveSteerMediaKind({ document: { file_id: "a" } });
+    expect(
+      isSteerPreviewComplete({
+        rawText: "帮我看看这个 jsonl 文件",
+        mediaKind,
+        steerMediaPath: "/data/media/inbound/a.jsonl",
+      }),
+    ).toBe(true);
+    const body = buildSteerPreviewBody({
+      text: "帮我看看这个 jsonl 文件",
+      mediaKind,
+      filePath: "/data/media/inbound/a.jsonl",
+    });
+    expect(body).toContain("/data/media/inbound/a.jsonl");
   });
 });

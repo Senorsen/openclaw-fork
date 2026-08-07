@@ -220,3 +220,47 @@ export function isSteerPreviewComplete(params: {
   }
   return hasMediaPath;
 }
+
+/** Minimal shape of a Telegram message needed to classify its attachment. */
+export type SteerMediaMessage = {
+  voice?: unknown;
+  audio?: unknown;
+  photo?: unknown[];
+  video?: unknown;
+  document?: unknown;
+  sticker?: unknown;
+  animation?: unknown;
+};
+
+/**
+ * Classify the attachment carried by a steer message.
+ *
+ * IMPORTANT: this must be independent of whether the message also has a
+ * caption. A document/photo sent *with* a caption is still an attachment; a
+ * previous version only classified caption-less messages, so captioned media
+ * skipped the pre-download entirely and the long caption then marked the
+ * preview "complete", dropping the formal message and losing the file.
+ */
+export function resolveSteerMediaKind(
+  msg: SteerMediaMessage | undefined | null,
+): "audio" | "image" | "video" | "file" | "media" | undefined {
+  if (!msg) {
+    return undefined;
+  }
+  if (msg.voice || msg.audio) {
+    return "audio";
+  }
+  if (Array.isArray(msg.photo) && msg.photo.length > 0) {
+    return "image";
+  }
+  if (msg.video || msg.animation) {
+    return "video";
+  }
+  if (msg.document) {
+    return "file";
+  }
+  if (msg.sticker) {
+    return "media";
+  }
+  return undefined;
+}

@@ -50,6 +50,7 @@ import {
   buildSteerStopHint,
   formatReceivedAtWithWeekday,
   isSteerPreviewComplete,
+  resolveSteerMediaKind,
   resolveTelegramReceiveTimezone,
 } from "./received-time.js";
 import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
@@ -428,23 +429,18 @@ export function createTelegramBotCore(
       const receivedAtMs =
         typeof msg.date === "number" && msg.date > 0 ? msg.date * 1000 : Date.now();
       const receivedAtText = formatReceivedAtWithWeekday(receivedAtMs, receiveTz);
-      const mediaKind: "audio" | "image" | "video" | "file" | "media" | undefined = isMediaOnly
-        ? msg.voice || msg.audio
-          ? "audio"
-          : msg.photo
-            ? "image"
-            : msg.video
-              ? "video"
-              : msg.document
-                ? "file"
-                : "media"
-        : undefined;
+      // NOTE: media detection must NOT depend on `isMediaOnly`. A document/photo
+      // sent WITH a caption is still an attachment; treating it as a plain text
+      // message skipped the pre-download entirely and then let the long caption
+      // mark the preview "complete", dropping the formal message and losing the
+      // file forever.
+      const mediaKind: "audio" | "image" | "video" | "file" | "media" | undefined = resolveSteerMediaKind(msg);
       // For media-only steer messages, best-effort download the file to the
       // shared inbound media store so the agent can transcribe/view it right
       // away. Bounded by a hard timeout; any failure degrades to a type marker.
       let steerMediaPath: string | undefined;
       let steerMediaMime: string | undefined;
-      if (isMediaOnly && mediaKind && mediaKind !== "media") {
+      if (mediaKind && mediaKind !== "media") {
         const photo = msg.photo && msg.photo.length ? msg.photo[msg.photo.length - 1] : undefined;
         const mediaSource =
           msg.voice ??
@@ -467,15 +463,24 @@ export function createTelegramBotCore(
             (msg.document?.mime_type as string | undefined) ??
             (mediaKind === "image" ? "image/jpeg" : undefined);
           steerMediaMime = mimeType;
-          steerMediaPath = await downloadSteerPreviewMedia({
-            fileId,
-            telegramFileName,
-            mimeType,
-            token: opts.token,
-            apiRoot: normalizedApiRoot,
-            transport: telegramTransport,
-            getFile: (id) => ctx.api.getFile(id),
-          });
+          try {
+            steerMediaPath = await downloadSteerPreviewMedia({
+              fileId,
+              telegramFileName,
+              mimeType,
+              token: opts.token,
+              apiRoot: normalizedApiRoot,
+              transport: telegramTransport,
+              getFile: (id) => ctx.api.getFile(id),
+            });
+          } catch (err) {
+            // Never let a download failure escape: the formal message MUST still
+            // reach the follow-up queue so the attachment is not lost.
+            steerMediaPath = undefined;
+            steerBypassLogger.debug(
+              `steer bypass: media pre-download failed for chat=${chatId}: ${String(err)}`,
+            );
+          }
         }
       }
       // For voice/audio steer previews, best-effort transcribe the downloaded
@@ -488,13 +493,20 @@ export function createTelegramBotCore(
       if (mediaKind === "audio" && steerMediaPath) {
         const messageThreadId =
           typeof msg.message_thread_id === "number" ? msg.message_thread_id : undefined;
-        steerAudioTranscript = await transcribeSteerPreviewAudio({
-          filePath: steerMediaPath,
-          mimeType: steerMediaMime,
-          cfg,
-          accountId: account.accountId,
-          messageThreadId,
-        });
+        try {
+          steerAudioTranscript = await transcribeSteerPreviewAudio({
+            filePath: steerMediaPath,
+            mimeType: steerMediaMime,
+            cfg,
+            accountId: account.accountId,
+            messageThreadId,
+          });
+        } catch (err) {
+          steerAudioTranscript = undefined;
+          steerBypassLogger.debug(
+            `steer bypass: audio pre-transcription failed for chat=${chatId}: ${String(err)}`,
+          );
+        }
       }
       const senderName =
         [msg.from?.first_name, msg.from?.last_name]
