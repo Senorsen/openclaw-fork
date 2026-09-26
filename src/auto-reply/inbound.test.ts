@@ -500,6 +500,7 @@ describe("createInboundDebouncer", () => {
     // isolates the "busy turn" coalescing behavior we added.
     const debouncer = createInboundDebouncer<{ key: string; id: string }>({
       debounceMs: 0,
+      serializeImmediate: true,
       buildKey: (item) => item.key,
       onFlush: async (items) => {
         const ids = items.map((entry) => entry.id).join(",");

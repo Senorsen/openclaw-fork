@@ -1,6 +1,8 @@
 import { useFrozenTime, useRealTime } from "openclaw/plugin-sdk/test-env";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+const mediaResolver = await import("./bot/delivery.resolve-media.js");
+
 const harness = await import("./bot.create-telegram-bot.test-harness.js");
 const {
   getLoadConfigMock,
@@ -85,6 +87,7 @@ function createChannelPostContext(params: {
   date: number;
   title?: string;
   caption?: string;
+  captionEntities?: Array<{ type: "text_link"; offset: number; length: number; url: string }>;
   text?: string;
   mediaGroupId?: string;
   photoFileId?: string;
@@ -97,6 +100,7 @@ function createChannelPostContext(params: {
       message_id: params.messageId,
       date: params.date,
       ...(params.caption ? { caption: params.caption } : {}),
+      ...(params.captionEntities ? { caption_entities: params.captionEntities } : {}),
       ...(params.text ? { text: params.text } : {}),
       ...(params.mediaGroupId ? { media_group_id: params.mediaGroupId } : {}),
       ...(photoFileId ? { photo: [{ file_id: photoFileId }] } : {}),
@@ -204,6 +208,44 @@ describe("createTelegramBot channel_post media", () => {
     } finally {
       setTimeoutSpy.mockRestore();
       fetchSpy.mockRestore();
+    }
+  });
+
+  it("retains every caption and image in a forwarded album in message order", async () => {
+    setOpenChannelPostConfig();
+    const mediaSpy = vi
+      .spyOn(mediaResolver, "resolveMedia")
+      .mockImplementation(async ({ ctx }) => ({
+        path: `/data/media/${ctx.message.message_id}.jpg`,
+        contentType: "image/jpeg",
+      }));
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      const handler = getChannelPostHandler();
+      for (const id of [503, 501, 502]) {
+        await handler(
+          createChannelPostContext({
+            messageId: id,
+            date: 1736380800,
+            mediaGroupId: "multi-caption",
+            caption: `caption-${id}`,
+            captionEntities: [
+              { type: "text_link", offset: 0, length: 11, url: `https://example.com/${id}` },
+            ],
+            photoFileId: `p${id}`,
+          }),
+        );
+      }
+      await flushChannelPostMediaGroup(setTimeoutSpy);
+      expect(replySpy).toHaveBeenCalledTimes(1);
+      const payload = replyPayload();
+      expect(payload.RawBody).toBe(
+        "[caption-501](https://example.com/501)\n[caption-502](https://example.com/502)\n[caption-503](https://example.com/503)",
+      );
+      expect(payload.MediaPaths).toHaveLength(3);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      mediaSpy.mockRestore();
     }
   });
 
@@ -528,11 +570,14 @@ describe("createTelegramBot channel_post media", () => {
     }
   });
 
-  it("drops the media group when a non-recoverable media error occurs", async () => {
+  it("retains other album members when one getFile response is malformed", async () => {
     replySpy.mockReset();
     setOpenChannelPostConfig();
 
-    const fetchSpy = createImageFetchSpy();
+    const mediaSpy = vi
+      .spyOn(mediaResolver, "resolveMedia")
+      .mockResolvedValueOnce({ path: "/data/media/first.jpg", contentType: "image/jpeg" })
+      .mockRejectedValueOnce(new Error("missing file_path"));
 
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
     try {
@@ -547,10 +592,17 @@ describe("createTelegramBot channel_post media", () => {
       expect(replySpy).not.toHaveBeenCalled();
       await flushChannelPostMediaGroup(setTimeoutSpy);
 
-      expect(replySpy).not.toHaveBeenCalled();
+      expect(replySpy).toHaveBeenCalledTimes(1);
+      expect(replyPayload().MediaPaths).toEqual(["/data/media/first.jpg"]);
+      expect(replyPayload().RawBody).toBe("fatal album");
+      expect(sendMessageSpy).toHaveBeenCalledWith(
+        -100777111222,
+        expect.stringContaining("Received 1 of 2 images"),
+        expect.any(Object),
+      );
     } finally {
       setTimeoutSpy.mockRestore();
-      fetchSpy.mockRestore();
+      mediaSpy.mockRestore();
     }
   });
 });

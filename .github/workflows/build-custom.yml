@@ -3,13 +3,30 @@ name: Build Custom Image
 on:
   push:
     branches:
-      - '2026.5.18-custom'
+      - "2026.5.18-custom"
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
+  verify-inbound:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-env
+        with:
+          pnpm-version: "11.1.0"
+      - name: Telegram ingress and busy-queue regressions
+        env:
+          OPENCLAW_VITEST_MAX_WORKERS: "2"
+        run: |
+          node scripts/run-vitest.mjs run --config test/vitest/vitest.extension-telegram.config.ts extensions/telegram/src/bot.steer-delivery.test.ts extensions/telegram/src/steer-preview-complete.test.ts extensions/telegram/src/bot.create-telegram-bot.channel-post-media.test.ts
+          node scripts/run-vitest.mjs run --config test/vitest/vitest.auto-reply.config.ts src/auto-reply/inbound.test.ts src/auto-reply/reply/queue.drain-restart.test.ts src/auto-reply/reply/queue.dedupe.test.ts
+
   build:
+    needs: verify-inbound
     runs-on: ubuntu-latest
     permissions:
       contents: read

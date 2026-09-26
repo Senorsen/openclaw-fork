@@ -1,13 +1,20 @@
+import type { Context } from "grammy";
+import {
+  queueAgentHarnessMessage,
+  resolveActiveEmbeddedRunSessionId,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   resolveChannelGroupPolicy,
   resolveChannelGroupRequireMention,
 } from "openclaw/plugin-sdk/channel-policy";
+import { isBtwRequestText } from "openclaw/plugin-sdk/command-primitives-runtime";
 import {
   resolveThreadBindingIdleTimeoutMsForChannel,
   resolveThreadBindingMaxAgeMsForChannel,
   resolveThreadBindingSpawnPolicy,
 } from "openclaw/plugin-sdk/conversation-runtime";
 import { formatErrorMessage, formatUncaughtError } from "openclaw/plugin-sdk/error-runtime";
+import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
 import {
   isNativeCommandsExplicitlyDisabled,
   resolveNativeCommandsEnabled,
@@ -15,6 +22,7 @@ import {
 } from "openclaw/plugin-sdk/native-command-config-runtime";
 import { resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-chunking";
 import { DEFAULT_GROUP_HISTORY_LIMIT, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
+import type { MsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import { danger, logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
@@ -40,9 +48,11 @@ import {
   resolveTelegramClientTimeoutSeconds,
   resolveTelegramOutboundClientTimeoutFloorSeconds,
 } from "./client-fetch.js";
+import {
+  resolveTelegramConversationRoute,
+  resolveTelegramConversationBaseSessionKey,
+} from "./conversation-route.js";
 import { resolveTelegramApiBase, resolveTelegramTransport } from "./fetch.js";
-import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
-import type { MsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import { transcribeFirstAudio } from "./media-understanding.runtime.js";
 import { stringifyTelegramRawUpdateForLog } from "./raw-update-log.js";
 import {
@@ -54,17 +64,6 @@ import {
   resolveTelegramReceiveTimezone,
 } from "./received-time.js";
 import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
-import {
-  queueAgentHarnessMessage,
-  resolveActiveEmbeddedRunSessionId,
-} from "openclaw/plugin-sdk/agent-harness-runtime";
-import {
-  isBtwRequestText,
-} from "openclaw/plugin-sdk/command-primitives-runtime";
-import {
-  resolveTelegramConversationRoute,
-  resolveTelegramConversationBaseSessionKey,
-} from "./conversation-route.js";
 import { getTelegramSequentialKey, isTelegramControlLaneText } from "./sequential-key.js";
 import { createTelegramThreadBindingManager } from "./thread-bindings.js";
 
@@ -373,30 +372,29 @@ export function createTelegramBotCore(
     }
   });
 
-  // --- Steer stop-gate: when a run is active, inject a fixed STOP hint (no user
-  //     content) then let the real message flow through sequentialize + the
-  //     follow-up queue in receive order (batched). Never inline-steers raw text. ---
+  // Steer is a best-effort preview, never the acknowledgement of an inbound
+  // message. The canonical pipeline owns dispatch, batching and attachments.
   const steerBypassLogger = createSubsystemLogger("gateway/channels/telegram/steer-bypass");
-  bot.use(async (ctx, next) => {
+  const injectSteerPreview = async (ctx: Context) => {
     const msg = ctx.message ?? ctx.channelPost;
     if (!msg) {
-      return next();
+      return;
     }
     const rawText = msg.text ?? msg.caption;
     const isMediaOnly = !rawText?.trim();
     const botUsername = ctx.me?.username;
     // Skip control lane messages (/stop, /status, etc.) — they have their own lane
     if (rawText && isTelegramControlLaneText({ rawText, botUsername })) {
-      return next();
+      return;
     }
     // Skip /btw messages — they have their own lane
     if (rawText && isBtwRequestText(rawText, botUsername ? { botUsername } : undefined)) {
-      return next();
+      return;
     }
     const chatId = msg.chat?.id;
     const senderId = msg.from?.id;
     if (chatId == null) {
-      return next();
+      return;
     }
     const isGroup = msg.chat?.type === "group" || msg.chat?.type === "supergroup";
     try {
@@ -416,15 +414,8 @@ export function createTelegramBotCore(
       });
       const sessionId = resolveActiveEmbeddedRunSessionId(baseSessionKey);
       if (!sessionId) {
-        return next();
+        return;
       }
-      // Unified behavior (custom): regardless of message type (text, voice,
-      // photo, document, ...), inject a fixed STOP hint into the active run and
-      // then let the real message flow through the normal pipeline so it lands in
-      // the follow-up queue in receive order. We intentionally never steer the
-      // user's raw text inline anymore — that caused reordering. The stop hint
-      // carries the true receive time (not the processing time) plus the Chinese
-      // weekday, and never includes the user's actual message content.
       const receiveTz = resolveTelegramReceiveTimezone(cfg.agents?.defaults?.userTimezone);
       const receivedAtMs =
         typeof msg.date === "number" && msg.date > 0 ? msg.date * 1000 : Date.now();
@@ -434,7 +425,8 @@ export function createTelegramBotCore(
       // message skipped the pre-download entirely and then let the long caption
       // mark the preview "complete", dropping the formal message and losing the
       // file forever.
-      const mediaKind: "audio" | "image" | "video" | "file" | "media" | undefined = resolveSteerMediaKind(msg);
+      const mediaKind: "audio" | "image" | "video" | "file" | "media" | undefined =
+        resolveSteerMediaKind(msg);
       // For media-only steer messages, best-effort download the file to the
       // shared inbound media store so the agent can transcribe/view it right
       // away. Bounded by a hard timeout; any failure degrades to a type marker.
@@ -443,12 +435,7 @@ export function createTelegramBotCore(
       if (mediaKind && mediaKind !== "media") {
         const photo = msg.photo && msg.photo.length ? msg.photo[msg.photo.length - 1] : undefined;
         const mediaSource =
-          msg.voice ??
-          msg.audio ??
-          photo ??
-          msg.video ??
-          msg.document ??
-          undefined;
+          msg.voice ?? msg.audio ?? photo ?? msg.video ?? msg.document ?? undefined;
         const fileId: string | undefined = mediaSource?.file_id;
         if (fileId) {
           const telegramFileName =
@@ -521,22 +508,14 @@ export function createTelegramBotCore(
         filePath: steerMediaPath,
         transcript: steerAudioTranscript,
       });
-      // Determine whether the preview already contains the full message content.
-      // Text messages: raw text present and non-trivial.
-      // Audio: downloaded + transcribed and non-trivial.
-      // Image/video/file: downloaded locally.
-      // Only skip the follow-up queue when there is genuine content (>5 chars)
-      // so a very short or empty preview never silently drops the real message.
-      // NOTE: when media is present, a long caption must NOT be enough on its
-      // own — otherwise the formal message (which carries the attachment) gets
-      // dropped and the file is lost forever.
+      // Completeness only changes preview wording, not delivery ownership.
       const previewComplete: boolean = isSteerPreviewComplete({
         rawText,
         mediaKind,
         steerMediaPath,
         transcript: steerAudioTranscript,
       });
-      queueAgentHarnessMessage(
+      const previewQueued = queueAgentHarnessMessage(
         sessionId,
         buildSteerStopHint({
           senderName,
@@ -548,24 +527,24 @@ export function createTelegramBotCore(
         }),
       );
       steerBypassLogger.debug(
-        `steer bypass: injected stop hint into active session ${sessionId} ` +
+        `steer bypass: previewQueued=${previewQueued} session=${sessionId} ` +
           `(chat=${chatId}, media=${isMediaOnly}, receivedAt=${receivedAtText}, previewComplete=${previewComplete})`,
       );
-      if (previewComplete) {
-        // Preview has full content — drop the formal message from the follow-up
-        // queue to avoid duplicate processing.
-        return;
-      }
-      // Preview is incomplete (media not downloaded). Let the real message go
-      // through the normal pipeline (sequentialize + follow-up queue) so the
-      // agent can handle it once it arrives.
-      return next();
     } catch (err) {
-      steerBypassLogger.debug(
-        `steer bypass: failed for chat=${chatId}: ${String(err)}`,
-      );
+      steerBypassLogger.debug(`steer bypass: failed for chat=${chatId}: ${String(err)}`);
     }
-    return next();
+    return;
+  };
+
+  bot.use(async (ctx, next) => {
+    // Reserve canonical dispatch order before preview downloads/transcription
+    // await network I/O. A slow photo must not let later text overtake it.
+    const preview = injectSteerPreview(ctx);
+    try {
+      await next();
+    } finally {
+      await preview;
+    }
   });
 
   bot.use(botRuntime.sequentialize(getTelegramSequentialKey));

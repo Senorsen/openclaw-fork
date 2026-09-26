@@ -93,21 +93,20 @@ export function buildSteerStopHint(params: {
   /** Preview body: plain text, or a `<media:...>` marker for media messages. */
   previewBody: string;
   /**
-   * Whether the preview already contains the full message content (raw text
-   * present, audio transcribed, or media downloaded). When true, the formal
-   * message has been dropped from the follow-up queue so no dedup is needed;
-   * the hint text is simplified accordingly. When false (media not downloaded),
-   * the warning to stop blocking operations is retained.
+   * Whether preview content is available immediately. The canonical message
+   * is always retained; this flag only selects the preview wording.
    */
   previewComplete?: boolean;
 }): string {
   const name = params.senderName.trim() || "用户";
-  const idPart = params.senderId != null && String(params.senderId).trim() ? `(${params.senderId})` : "";
-  const msgIdText = params.messageId != null && String(params.messageId).trim() ? `#${params.messageId}` : "#未知";
+  const idPart =
+    params.senderId != null && String(params.senderId).trim() ? `(${params.senderId})` : "";
+  const msgIdText =
+    params.messageId != null && String(params.messageId).trim() ? `#${params.messageId}` : "#未知";
   if (params.previewComplete) {
     return (
       `[系统] ${name}${idPart}于 ${params.receivedAtText} 发来了一条新消息，请立刻处理。` +
-      `（消息ID：${msgIdText}，如正式消息仍进入队列可凭此ID去重）\n\n` +
+      `（消息ID：${msgIdText}，正式消息仍会送达；已处理的内容请凭此ID去重，不要重复执行）\n\n` +
       `--- 消息内容 ---\n` +
       `${msgIdText} ${name} ${params.receivedAtText}: ${params.previewBody}`
     );
@@ -192,13 +191,12 @@ function buildSteerMediaMarker(
 }
 
 /**
- * Whether a steer preview already carries the *entire* message content, so the
- * formal follow-up message can safely be dropped.
+ * Whether preview content is available. This is not a delivery receipt: even
+ * complete previews must retain the canonical message and native attachments.
  *
  * Critical: when the message carries media, text completeness alone is NOT
  * enough — a caption longer than the threshold must never make a media message
- * look complete, otherwise the attachment is lost forever (the local file path
- * only exists once the media has been pre-downloaded).
+ * look complete when the attachment could not be pre-downloaded.
  */
 export function isSteerPreviewComplete(params: {
   rawText?: string;

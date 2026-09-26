@@ -1,13 +1,8 @@
 import type { Message } from "grammy/types";
-import { MediaFetchError } from "openclaw/plugin-sdk/media-runtime";
 
 export function isMediaSizeLimitError(err: unknown): boolean {
   const errMsg = String(err);
   return errMsg.includes("exceeds") && errMsg.includes("MB limit");
-}
-
-export function isRecoverableMediaGroupError(err: unknown): boolean {
-  return err instanceof MediaFetchError || isMediaSizeLimitError(err);
 }
 
 export function hasInboundMedia(msg: Message): boolean {

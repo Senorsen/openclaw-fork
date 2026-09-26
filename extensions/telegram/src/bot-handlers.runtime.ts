@@ -61,7 +61,6 @@ import {
   hasInboundMedia,
   hasReplyTargetMedia,
   isMediaSizeLimitError,
-  isRecoverableMediaGroupError,
   resolveInboundMediaFileId,
 } from "./bot-handlers.media.js";
 import type { TelegramMediaRef } from "./bot-message-context.js";
@@ -775,9 +774,8 @@ export const registerTelegramHandlers = ({
             ...mediaRuntimeOptions,
           });
         } catch (mediaErr) {
-          if (!isRecoverableMediaGroupError(mediaErr)) {
-            throw mediaErr;
-          }
+          // A malformed/unavailable member must not discard successfully
+          // fetched siblings. Report the partial album below for every failure.
           runtime.log?.(
             warn(`media group: skipping photo that failed to fetch: ${String(mediaErr)}`),
           );
@@ -815,9 +813,30 @@ export const registerTelegramHandlers = ({
         }).catch(() => {});
       }
 
+      // Forwarded albums can have a different caption on every member. Keep
+      // all of them in message order, not just the first caption used for routing.
+      const textParts = entry.messages
+        .map(({ msg }) => getTelegramTextParts(msg))
+        .filter(({ text }) => Boolean(text));
+      let textOffset = 0;
+      const entities = textParts.flatMap(({ text, entities }) => {
+        const shifted = entities.map((entity) => ({
+          ...entity,
+          offset: entity.offset + textOffset,
+        }));
+        textOffset += text.length + 1;
+        return shifted;
+      });
+      const combinedMessage: Message = {
+        ...buildSyntheticTextMessage({
+          base: primaryEntry.msg,
+          text: textParts.map(({ text }) => text).join("\n"),
+        }),
+        entities,
+      };
       await processMessageWithReplyChain(
-        primaryEntry.ctx,
-        primaryEntry.msg,
+        buildSyntheticContext(primaryEntry.ctx, combinedMessage),
+        combinedMessage,
         allMedia,
         entry.storeAllowFrom,
         promptContextBoundaryOptions(entry.promptContextMinTimestampMs),
