@@ -65,6 +65,20 @@ type LockInspectionDetails = Pick<
 
 const SESSION_LOCKS = createFileLockManager("openclaw.session-write-lock");
 let resolveProcessStartTimeForLock = getProcessStartTime;
+// fs-safe publishes held entries after writing metadata, and removes them
+// before async release completes. Neither window is an orphan self-lock.
+const sessionLockTransitions = new Map<string, number>();
+function beginSessionLockTransition(sessionFile: string): () => void {
+  sessionLockTransitions.set(sessionFile, (sessionLockTransitions.get(sessionFile) ?? 0) + 1);
+  return () => {
+    const remaining = (sessionLockTransitions.get(sessionFile) ?? 1) - 1;
+    if (remaining > 0) {
+      sessionLockTransitions.set(sessionFile, remaining);
+    } else {
+      sessionLockTransitions.delete(sessionFile);
+    }
+  };
+}
 
 function isFileLockError(error: unknown, code: string): boolean {
   return (error as { code?: unknown } | null)?.code === code;
@@ -547,8 +561,11 @@ async function shouldReclaimContendedLockFile(
 }
 
 function sessionLockHeldByThisProcess(normalizedSessionFile: string): boolean {
-  return SESSION_LOCKS.heldEntries().some(
-    (entry) => entry.normalizedTargetPath === normalizedSessionFile,
+  return (
+    sessionLockTransitions.has(normalizedSessionFile) ||
+    SESSION_LOCKS.heldEntries().some(
+      (entry) => entry.normalizedTargetPath === normalizedSessionFile,
+    )
   );
 }
 
@@ -736,6 +753,7 @@ export async function acquireSessionWriteLock(params: {
   await fs.mkdir(sessionDir, { recursive: true });
   const deadline = Date.now() + timeoutMs;
   while (true) {
+    let finishInitialization: (() => void) | undefined;
     try {
       const lock = await SESSION_LOCKS.acquire(sessionFile, {
         staleMs,
@@ -753,6 +771,7 @@ export async function acquireSessionWriteLock(params: {
           }),
         metadata: { maxHoldMs },
         payload: () => {
+          finishInitialization = beginSessionLockTransition(normalizedSessionFile);
           const createdAt = new Date().toISOString();
           const starttime = resolveProcessStartTimeForLock(process.pid);
           const lockPayload: LockFilePayload = { pid: process.pid, createdAt };
@@ -766,14 +785,24 @@ export async function acquireSessionWriteLock(params: {
             payload: payload as LockFilePayload | null,
             staleMs,
             nowMs,
-            heldByThisProcess,
+            heldByThisProcess:
+              heldByThisProcess || sessionLockTransitions.has(normalizedSessionFile),
             reclaimLockWithoutStarttime: true,
             readOwnerProcessArgs: readProcessArgsSync,
           });
           return await shouldReclaimContendedLockFile(lockPath, inspected, staleMs, nowMs);
         },
       });
-      return { release: lock.release };
+      return {
+        release: async () => {
+          const finishRelease = beginSessionLockTransition(normalizedSessionFile);
+          try {
+            await lock.release();
+          } finally {
+            finishRelease();
+          }
+        },
+      };
     } catch (err) {
       const staleRace = isFileLockError(err, "file_lock_stale");
       if (staleRace && Date.now() < deadline) {
@@ -789,6 +818,8 @@ export async function acquireSessionWriteLock(params: {
       const payload = await readLockPayload(timeoutLockPath);
       const owner = typeof payload?.pid === "number" ? `pid=${payload.pid}` : "unknown";
       throw new SessionWriteLockTimeoutError({ timeoutMs, owner, lockPath: timeoutLockPath });
+    } finally {
+      finishInitialization?.();
     }
   }
 }

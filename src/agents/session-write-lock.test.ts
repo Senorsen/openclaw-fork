@@ -247,6 +247,49 @@ describe("acquireSessionWriteLock", () => {
     });
   });
 
+  it("does not reclaim a live owner while its lock initialization is finishing", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lock-init-"));
+    const sessionFile = path.join(dir, "session.jsonl");
+    const originalOpen = fs.open.bind(fs);
+    let signalInitialized!: () => void;
+    const initialized = new Promise<void>((resolve) => {
+      signalInitialized = resolve;
+    });
+    let finishInitialization!: () => void;
+    const finish = new Promise<void>((resolve) => {
+      finishInitialization = resolve;
+    });
+    let first = true;
+    const open = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await originalOpen(...args);
+      if (first && args[0] === `${sessionFile}.lock` && args[1] === "wx") {
+        first = false;
+        const stat = handle.stat.bind(handle);
+        handle.stat = (async () => {
+          signalInitialized();
+          await finish;
+          return await stat();
+        }) as typeof handle.stat;
+      }
+      return handle;
+    });
+    let owner: Awaited<ReturnType<typeof acquireSessionWriteLock>> | undefined;
+    try {
+      const pendingOwner = acquireSessionWriteLock({ sessionFile, timeoutMs: 500 });
+      await initialized;
+      await expect(acquireSessionWriteLock({ sessionFile, timeoutMs: 20 })).rejects.toThrow(
+        "session file locked",
+      );
+      finishInitialization();
+      owner = await pendingOwner;
+    } finally {
+      finishInitialization();
+      await owner?.release();
+      open.mockRestore();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps concurrent event/tool lock churn exclusive without leaking transient stale errors", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lock-churn-"));
     const sessionFile = path.join(dir, "session.jsonl");
