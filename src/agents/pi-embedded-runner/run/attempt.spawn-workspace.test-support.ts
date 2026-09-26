@@ -311,6 +311,10 @@ vi.mock("../../sandbox.js", () => ({
   resolveSandboxContext: (...args: unknown[]) => hoisted.resolveSandboxContextMock(...args),
 }));
 
+vi.mock("../open-session-manager.js", () => ({
+  openSessionManager: (...args: unknown[]) => hoisted.sessionManagerOpenMock(...args),
+}));
+
 vi.mock("../../session-tool-result-guard-wrapper.js", () => ({
   guardSessionManager: (sessionManager: unknown) => sessionManager,
 }));
@@ -835,6 +839,8 @@ export type MutableSession = {
   setActiveToolsByName: (toolNames: string[]) => void;
   abort: () => Promise<void>;
   dispose: () => void;
+  setSteeringMode: (mode: "all" | "one-at-a-time") => void;
+  setFollowUpMode: (mode: "all" | "one-at-a-time") => void;
   steer: (text: string) => Promise<void>;
 };
 
@@ -1048,6 +1054,8 @@ export function createDefaultEmbeddedSession(params?: {
     },
     abort: async () => {},
     dispose: () => {},
+    setSteeringMode: () => {},
+    setFollowUpMode: () => {},
     steer: async () => {},
   };
 

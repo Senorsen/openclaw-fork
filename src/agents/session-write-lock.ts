@@ -552,7 +552,7 @@ function sessionLockHeldByThisProcess(normalizedSessionFile: string): boolean {
   );
 }
 
-async function removeReportedStaleLockIfStillStale(params: {
+async function reportedLockIsStillStale(params: {
   lockPath: string;
   normalizedSessionFile: string;
   staleMs: number;
@@ -571,7 +571,6 @@ async function removeReportedStaleLockIfStillStale(params: {
   if (!(await shouldReclaimContendedLockFile(params.lockPath, inspected, params.staleMs, nowMs))) {
     return false;
   }
-  await fs.rm(params.lockPath, { force: true });
   return true;
 }
 
@@ -735,13 +734,23 @@ export async function acquireSessionWriteLock(params: {
   const normalizedSessionFile = await resolveNormalizedSessionFile(sessionFile);
   const lockPath = `${normalizedSessionFile}.lock`;
   await fs.mkdir(sessionDir, { recursive: true });
+  const deadline = Date.now() + timeoutMs;
   while (true) {
     try {
       const lock = await SESSION_LOCKS.acquire(sessionFile, {
         staleMs,
-        timeoutMs,
+        timeoutMs: Math.max(0, deadline - Date.now()),
         retry: { minTimeout: 50, maxTimeout: 1000, factor: 1 },
         allowReentrant,
+        // Let fs-safe recheck the exact snapshot before removal. A release or a
+        // new owner can race stale inspection, especially during tool events.
+        staleRecovery: "remove-if-unchanged",
+        shouldRemoveStaleLock: async ({ lockPath: observedLockPath }) =>
+          await reportedLockIsStillStale({
+            lockPath: observedLockPath,
+            normalizedSessionFile,
+            staleMs,
+          }),
         metadata: { maxHoldMs },
         payload: () => {
           const createdAt = new Date().toISOString();
@@ -766,19 +775,14 @@ export async function acquireSessionWriteLock(params: {
       });
       return { release: lock.release };
     } catch (err) {
-      if (isFileLockError(err, "file_lock_stale")) {
-        const staleLockPath = (err as { lockPath?: string }).lockPath ?? lockPath;
-        if (
-          await removeReportedStaleLockIfStillStale({
-            lockPath: staleLockPath,
-            normalizedSessionFile,
-            staleMs,
-          })
-        ) {
-          continue;
-        }
+      const staleRace = isFileLockError(err, "file_lock_stale");
+      if (staleRace && Date.now() < deadline) {
+        // The stale candidate became live/disappeared before removal approval.
+        // Retry contention within the original deadline, not as a tool failure.
+        await new Promise((resolve) => setTimeout(resolve, Math.min(50, deadline - Date.now())));
+        continue;
       }
-      if (!isFileLockError(err, "file_lock_timeout")) {
+      if (!staleRace && !isFileLockError(err, "file_lock_timeout")) {
         throw err;
       }
       const timeoutLockPath = (err as { lockPath?: string }).lockPath ?? lockPath;

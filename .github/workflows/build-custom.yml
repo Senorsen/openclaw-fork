@@ -25,6 +25,13 @@ jobs:
           node scripts/run-vitest.mjs run --config test/vitest/vitest.extension-telegram.config.ts extensions/telegram/src/bot.steer-delivery.test.ts extensions/telegram/src/steer-preview-complete.test.ts extensions/telegram/src/bot.create-telegram-bot.channel-post-media.test.ts
           node scripts/run-vitest.mjs run --config test/vitest/vitest.auto-reply.config.ts src/auto-reply/inbound.test.ts src/auto-reply/reply/queue.drain-restart.test.ts src/auto-reply/reply/queue.dedupe.test.ts
 
+      - name: Session retry memory and write-lock regressions
+        env:
+          OPENCLAW_VITEST_MAX_WORKERS: "2"
+        run: |
+          node scripts/run-vitest.mjs run --config test/vitest/vitest.agents-support.config.ts src/agents/session-write-lock.test.ts
+          node scripts/run-vitest.mjs run --config test/vitest/vitest.agents-pi-embedded.config.ts src/agents/pi-embedded-runner/open-session-manager.test.ts src/agents/pi-embedded-runner/run/attempt.session-lock.test.ts src/agents/pi-embedded-runner/run/attempt.spawn-workspace.context-engine.test.ts src/agents/pi-embedded-runner/run/llm-idle-timeout.test.ts
+
   build:
     needs: verify-inbound
     runs-on: ubuntu-latest

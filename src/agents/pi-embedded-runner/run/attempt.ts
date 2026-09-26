@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession } from "@earendil-works/pi-coding-agent";
 import { isAcpRuntimeSpawnAvailable } from "../../../acp/runtime/availability.js";
 import { buildHierarchyReinforcementMessage } from "../../../auto-reply/handoff-summarizer.js";
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
@@ -217,6 +217,7 @@ import { prepareGooglePromptCacheStreamFn } from "../google-prompt-cache.js";
 import { getHistoryLimitFromSessionKey, limitHistoryTurns } from "../history.js";
 import { log } from "../logger.js";
 import { buildEmbeddedMessageActionDiscoveryInput } from "../message-action-discovery-input.js";
+import { openSessionManager } from "../open-session-manager.js";
 import { createCodexNativeWebSearchWrapper } from "../openai-stream-wrappers.js";
 import {
   collectPromptCacheToolNames,
@@ -2062,7 +2063,7 @@ export async function runEmbeddedAttempt(
       });
 
       await prewarmSessionFile(params.sessionFile);
-      sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
+      sessionManager = guardSessionManager(await openSessionManager(params.sessionFile), {
         agentId: sessionAgentId,
         sessionKey: params.sessionKey,
         config: params.config,

@@ -247,6 +247,36 @@ describe("acquireSessionWriteLock", () => {
     });
   });
 
+  it("keeps concurrent event/tool lock churn exclusive without leaking transient stale errors", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lock-churn-"));
+    const sessionFile = path.join(dir, "session.jsonl");
+    let active = 0;
+    let completed = 0;
+    try {
+      await Promise.all(
+        Array.from({ length: 5 }, async () => {
+          for (let attempt = 0; attempt < 30; attempt += 1) {
+            const lock = await acquireSessionWriteLock({ sessionFile, timeoutMs: 10_000 });
+            try {
+              active += 1;
+              expect(active).toBe(1);
+              await fs.stat(`${sessionFile}.lock`);
+              expect(active).toBe(1);
+              completed += 1;
+            } finally {
+              active -= 1;
+              await lock.release();
+            }
+          }
+        }),
+      );
+      expect(completed).toBe(150);
+      await expectPathMissing(`${sessionFile}.lock`);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reclaims stale lock files", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lock-"));
     try {
