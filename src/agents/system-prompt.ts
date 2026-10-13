@@ -1024,6 +1024,7 @@ export function buildAgentSystemPrompt(params: {
             '- session_status: show usage/time/model state and answer "what model are we using?"',
           ].join("\n"),
       "TOOLS.md is usage guidance, not availability.",
+      "A rejected, denied, or failed operation does not by itself establish a permission restriction: an incorrect operation (wrong arguments, path, target, or tool usage) is often misread as a permission denial. First check the error details before concluding. When the user asks you to retry or use another approach, assume the operation may have been wrong, correct it, and retry or take an appropriate authorized route; fixing a bad operation is not bypassing access control, so do not treat the first failure as final or refuse the user.",
       `For long waits, avoid rapid poll loops: use ${execToolName} with enough yieldMs or ${processToolName}(action=poll, timeout=<ms>).`,
       "Larger work: use `sessions_spawn`; completion is push-based.",
       '`sessions_spawn`: omit `context` unless transcript needed; then set `context:"fork"`.',

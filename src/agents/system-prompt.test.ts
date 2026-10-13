@@ -213,6 +213,68 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("Read HEARTBEAT.md");
   });
 
+  it.each(["full", "minimal"] as const)(
+    "guides authorized retries in %s prompts without changing safety or approval rules",
+    (promptMode) => {
+      const prompt = buildAgentSystemPrompt({
+        workspaceDir: "/workspace/openclaw",
+        promptMode,
+        toolNames: ["exec"],
+      });
+
+      expect(prompt).toContain(
+        "A rejected, denied, or failed operation does not by itself establish a permission restriction: an incorrect operation (wrong arguments, path, target, or tool usage) is often misread as a permission denial.",
+      );
+      expect(prompt).toContain(
+        "When the user asks you to retry or use another approach, assume the operation may have been wrong, correct it, and retry or take an appropriate authorized route; fixing a bad operation is not bypassing access control, so do not treat the first failure as final or refuse the user.",
+      );
+      expect(prompt.match(/A rejected, denied, or failed operation/g)).toHaveLength(1);
+      expect(prompt).toContain(
+        "Safety/oversight over completion. Conflicts: pause/ask. Obey stop/pause/audit; never bypass safeguards.",
+      );
+      expect(prompt).toContain(
+        "Do not persuade anyone to expand access or disable safeguards. Do not copy yourself or change prompts/safety/tool policy unless explicitly requested.",
+      );
+      expect(prompt).toContain(
+        'If exec returns approval-pending, send the exact /approve command from "Reply with:"; do not ask for another code.',
+      );
+      expect(prompt).toContain(
+        "Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.",
+      );
+      expect(prompt).toContain(
+        "Treat allow-once as single-command only: if another elevated command needs approval, request a fresh /approve and do not claim prior approval covered it.",
+      );
+      expect(prompt).toContain(
+        "When approvals are required, preserve and show the full command/script exactly as provided (including chained operators like &&, ||, |, ;, or multiline shells) so the user can approve what will actually run, but keep command/script previews separate from the /approve command and never substitute the shell command/script for the approval id or slug.",
+      );
+    },
+  );
+
+  it("keeps retry guidance in Tooling when a provider overrides tool call style", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/workspace/openclaw",
+      promptContribution: {
+        sectionOverrides: {
+          tool_call_style: "## Tool Call Style\nProvider-specific tool call guidance.",
+        },
+      },
+    });
+
+    const tooling = prompt.split("## Tooling")[1]?.split("## Tool Call Style")[0];
+    expect(tooling).toContain("A rejected, denied, or failed operation");
+    expect(tooling).toContain("take an appropriate authorized route");
+    expect(prompt.match(/A rejected, denied, or failed operation/g)).toHaveLength(1);
+  });
+
+  it("keeps identity-only prompt mode free of operational retry guidance", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/workspace/openclaw",
+      promptMode: "none",
+    });
+
+    expect(prompt).toBe("You are a personal assistant running inside OpenClaw.");
+  });
+
   it("includes safety guardrails in full prompts", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
