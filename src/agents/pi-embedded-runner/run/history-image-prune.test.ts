@@ -61,18 +61,24 @@ function expectImageMessagePreserved(messages: AgentMessage[], errorMessage: str
   expectContentBlock(content[1], { type: "image", data: "abc" });
 }
 
-function oldEnoughTail(): AgentMessage[] {
+/**
+ * Completes the turn started by a leading message and appends `extraTurns`
+ * more completed text turns. The prune boundary moves in steps of 8 completed
+ * turns once the 3 most recent are set aside, so a leading message followed by
+ * 10 more turns (11 in total) is the smallest history that prunes it.
+ */
+function turnsAfter(extraTurns: number): AgentMessage[] {
   const assistantTurn = () => castAgentMessage({ role: "assistant", content: "ack" });
   const userText = () => castAgentMessage({ role: "user", content: "more" });
-  return [
-    assistantTurn(),
-    userText(),
-    assistantTurn(),
-    userText(),
-    assistantTurn(),
-    userText(),
-    assistantTurn(),
-  ];
+  const tail: AgentMessage[] = [assistantTurn()];
+  for (let i = 0; i < extraTurns; i++) {
+    tail.push(userText(), assistantTurn());
+  }
+  return tail;
+}
+
+function oldEnoughTail(): AgentMessage[] {
+  return turnsAfter(10);
 }
 
 describe("pruneProcessedHistoryImages", () => {
@@ -80,19 +86,13 @@ describe("pruneProcessedHistoryImages", () => {
   const assistantTurn = () => castAgentMessage({ role: "assistant", content: "ack" });
   const userText = () => castAgentMessage({ role: "user", content: "more" });
 
-  it("prunes image blocks from user messages older than 3 assistant turns", () => {
+  it("prunes image blocks from user messages once the boundary step is reached", () => {
     const messages: AgentMessage[] = [
       castAgentMessage({
         role: "user",
         content: [{ type: "text", text: "See /tmp/photo.png" }, { ...image }],
       }),
-      assistantTurn(),
-      userText(),
-      assistantTurn(),
-      userText(),
-      assistantTurn(),
-      userText(),
-      assistantTurn(),
+      ...oldEnoughTail(),
     ];
 
     const content = expectPrunedImageMessage(messages, "expected user array content");
@@ -265,20 +265,14 @@ describe("pruneProcessedHistoryImages", () => {
     expectContentBlock(content[1], { type: "image", data: "abc" });
   });
 
-  it("prunes image blocks from toolResult messages older than 3 assistant turns", () => {
+  it("prunes image blocks from toolResult messages once the boundary step is reached", () => {
     const messages: AgentMessage[] = [
       castAgentMessage({
         role: "toolResult",
         toolName: "read",
         content: [{ type: "text", text: "screenshot bytes" }, { ...image }],
       }),
-      assistantTurn(),
-      userText(),
-      assistantTurn(),
-      userText(),
-      assistantTurn(),
-      userText(),
-      assistantTurn(),
+      ...oldEnoughTail(),
     ];
 
     expectPrunedImageMessage(messages, "expected toolResult array content");
@@ -290,24 +284,24 @@ describe("pruneProcessedHistoryImages", () => {
         role: "user",
         content: [{ type: "text", text: "old" }, { ...image }],
       }),
-      assistantTurn(),
-      userText(),
-      assistantTurn(),
-      userText(),
-      assistantTurn(),
+      ...turnsAfter(9),
       castAgentMessage({
         role: "user",
         content: [{ type: "text", text: "recent" }, { ...image }],
       }),
       assistantTurn(),
     ];
+    const recentIndex = messages.length - 2;
 
     const pruned = expectPrunedMessages(messages);
 
     const oldContent = expectArrayMessageContent(pruned[0], "expected old user content");
     expectContentBlock(oldContent[1], { type: "text", text: PRUNED_HISTORY_IMAGE_MARKER });
 
-    const recentContent = expectArrayMessageContent(pruned[6], "expected recent user content");
+    const recentContent = expectArrayMessageContent(
+      pruned[recentIndex],
+      "expected recent user content",
+    );
     expectContentBlock(recentContent[1], { type: "image", data: "abc" });
 
     const originalOldContent = expectArrayMessageContent(
@@ -315,6 +309,55 @@ describe("pruneProcessedHistoryImages", () => {
       "expected original old user content",
     );
     expectContentBlock(originalOldContent[1], { type: "image", data: "abc" });
+  });
+
+  it("keeps aged media until the boundary step is reached", () => {
+    // 10 completed turns: 7 are older than the 3 kept turns, short of one step.
+    const messages: AgentMessage[] = [
+      castAgentMessage({
+        role: "user",
+        content: [{ type: "text", text: "See /tmp/photo.png" }, { ...image }],
+      }),
+      ...turnsAfter(9),
+    ];
+
+    expectImageMessagePreserved(messages, "expected user array content");
+  });
+
+  it("keeps the replayed history byte-stable between boundary steps", () => {
+    // Media sent at turns 0, 4 and 9; then the conversation keeps going.
+    const mediaTurn = (name: string) =>
+      castAgentMessage({
+        role: "user",
+        content: [
+          { type: "text", text: `look [media attached: media://inbound/${name}.png]` },
+          { ...image },
+        ],
+      });
+    const history: AgentMessage[] = [];
+    for (let turn = 0; turn < 30; turn++) {
+      const userMessage = [0, 4, 9].includes(turn)
+        ? mediaTurn(`t${turn}`)
+        : castAgentMessage({ role: "user", content: `turn ${turn}` });
+      history.push(userMessage, assistantTurn());
+    }
+    const replayAfter = (completedTurns: number) => {
+      const slice = history.slice(0, completedTurns * 2);
+      return JSON.stringify(pruneProcessedHistoryImages(slice) ?? slice);
+    };
+
+    // The boundary moves only when the completed turn count crosses 3 + 8k.
+    // Between those points each replay must extend the previous one exactly,
+    // which is what lets the provider reuse its prompt cache.
+    const rewrites: number[] = [];
+    for (let turns = 2; turns <= 30; turns++) {
+      const previous = replayAfter(turns - 1);
+      const current = replayAfter(turns);
+      if (!current.startsWith(previous.slice(0, -1))) {
+        rewrites.push(turns);
+      }
+    }
+    expect(rewrites).toEqual([11, 19]);
   });
 
   it("does not change messages when no assistant turn exists", () => {

@@ -16,11 +16,24 @@ type PrunableContextAgent = {
 };
 
 /**
- * Number of most-recent completed turns whose preceding user/toolResult image
- * blocks are kept intact. Counts all completed turns, not just image-bearing
- * ones, so text-only turns consume the window.
+ * Minimum number of most-recent completed turns whose preceding user/toolResult
+ * image blocks are kept intact. Counts all completed turns, not just
+ * image-bearing ones, so text-only turns consume the window.
  */
 const PRESERVE_RECENT_COMPLETED_TURNS = 3;
+
+/**
+ * The prune boundary only advances in steps of this many completed turns.
+ *
+ * Every time the boundary moves, older messages are rewritten in the replayed
+ * history. Those messages sit in the middle of the prompt, so each rewrite
+ * invalidates the provider prompt cache from that point on. Moving the
+ * boundary one turn at a time meant a cache miss on every turn after any
+ * media message aged out; stepping it keeps the replayed history byte-stable
+ * for this many turns at a time. Recent media stays visible for between
+ * PRESERVE_RECENT_COMPLETED_TURNS and that plus this step.
+ */
+const PRUNE_BOUNDARY_STEP_TURNS = 8;
 
 function resolvePruneBeforeIndex(messages: AgentMessage[]): number {
   const completedTurnStarts: number[] = [];
@@ -52,10 +65,14 @@ function resolvePruneBeforeIndex(messages: AgentMessage[]): number {
     completedTurnStarts.push(currentTurnStart);
   }
 
-  if (completedTurnStarts.length <= PRESERVE_RECENT_COMPLETED_TURNS) {
+  const prunableTurns = completedTurnStarts.length - PRESERVE_RECENT_COMPLETED_TURNS;
+  // Snap down to a multiple of the step so the boundary stays put between steps.
+  const steppedPrunableTurns =
+    Math.floor(prunableTurns / PRUNE_BOUNDARY_STEP_TURNS) * PRUNE_BOUNDARY_STEP_TURNS;
+  if (steppedPrunableTurns <= 0) {
     return -1;
   }
-  return completedTurnStarts[completedTurnStarts.length - PRESERVE_RECENT_COMPLETED_TURNS];
+  return completedTurnStarts[steppedPrunableTurns];
 }
 
 function pruneHistoryMediaReferenceText(text: string): string {
