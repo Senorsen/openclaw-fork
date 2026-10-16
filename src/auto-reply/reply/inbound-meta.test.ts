@@ -103,6 +103,27 @@ describe("buildInboundMetaSystemPrompt", () => {
     expect(payload["channel"]).toBe("telegram");
   });
 
+  it("describes heartbeat and system-event turns like a normal turn on the same channel", () => {
+    const normal = buildInboundMetaSystemPrompt({
+      OriginatingTo: "telegram:203205281",
+      OriginatingChannel: "telegram",
+      Provider: "telegram",
+      Surface: "telegram",
+      ChatType: "direct",
+      AccountId: "default",
+    } as TemplateContext);
+    for (const provider of ["heartbeat", "cron-event", "exec-event"]) {
+      const systemEventTurn = buildInboundMetaSystemPrompt({
+        OriginatingTo: "telegram:203205281",
+        OriginatingChannel: "telegram",
+        Provider: provider,
+        ChatType: "direct",
+        AccountId: "default",
+      } as TemplateContext);
+      expect(systemEventTurn).toBe(normal);
+    }
+  });
+
   it("keeps task-scoped chat ids out of the system prompt for cache stability", () => {
     const first = buildInboundMetaSystemPrompt({
       OriginatingTo: "paperclip:issue:c585d0cc",

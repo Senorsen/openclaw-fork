@@ -360,6 +360,8 @@ function formatConversationTimestamp(
   return formatEnvelopeTimestamp(value, envelope);
 }
 
+const SYSTEM_EVENT_PROVIDERS = new Set(["heartbeat", "cron-event", "exec-event"]);
+
 function resolveInboundChannel(ctx: TemplateContext): string | undefined {
   const surfaceValue = normalizePromptMetadataString(ctx.Surface);
   let channelValue = normalizePromptMetadataString(ctx.OriginatingChannel) ?? surfaceValue;
@@ -407,13 +409,24 @@ export function buildInboundMetaSystemPrompt(
   // For webchat/Hub Chat sessions (when Surface is 'webchat' or undefined with no real channel),
   // omit the channel field entirely rather than falling back to an unrelated provider.
   const channelValue = resolveInboundChannel(ctx);
+  // Heartbeat, cron and exec-completion turns run in the same session as normal
+  // chat turns. Reporting the internal event source here would make the system
+  // prompt differ on exactly those turns and invalidate the prompt cache, so
+  // describe them as the channel they are delivered to.
+  const isSystemEventTurn = SYSTEM_EVENT_PROVIDERS.has(
+    normalizePromptMetadataString(ctx.Provider) ?? "",
+  );
 
   const payload = {
     schema: "openclaw.inbound_meta.v2",
     account_id: normalizePromptMetadataString(ctx.AccountId),
     channel: channelValue,
-    provider: normalizePromptMetadataString(ctx.Provider),
-    surface: normalizePromptMetadataString(ctx.Surface),
+    provider:
+      isSystemEventTurn && channelValue ? channelValue : normalizePromptMetadataString(ctx.Provider),
+    surface:
+      isSystemEventTurn && channelValue
+        ? (normalizePromptMetadataString(ctx.Surface) ?? channelValue)
+        : normalizePromptMetadataString(ctx.Surface),
     chat_type: chatType ?? (isDirect ? "direct" : undefined),
     response_format:
       options?.includeFormattingHints === false ? undefined : resolveInboundFormattingHints(ctx),

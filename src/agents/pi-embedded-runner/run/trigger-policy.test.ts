@@ -6,8 +6,11 @@ describe("shouldInjectHeartbeatPromptForTrigger", () => {
     expect(shouldInjectHeartbeatPromptForTrigger("heartbeat")).toBe(true);
   });
 
+  it("injects the heartbeat prompt on user turns so the shared session prompt stays stable", () => {
+    expect(shouldInjectHeartbeatPromptForTrigger("user")).toBe(true);
+  });
+
   it.each([
-    ["user"] as const,
     ["manual"] as const,
     ["cron"] as const,
     ["memory"] as const,
