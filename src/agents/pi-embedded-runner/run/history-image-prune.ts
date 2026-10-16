@@ -97,6 +97,19 @@ function cloneMessageWithContent(
  * same boundary because detectAndLoadPromptImages treats them as fresh prompt
  * image references when old history is replayed into a later prompt.
  */
+/**
+ * Index before which replayed history may be rewritten (media pruning,
+ * inbound metadata stripping), or -1 when nothing may be rewritten yet.
+ *
+ * Every history rewrite that cleans up older messages must use this same
+ * boundary. It only moves in steps of PRUNE_BOUNDARY_STEP_TURNS completed
+ * turns, so all such rewrites land on the same turn and the replayed history
+ * stays byte-stable, and prompt-cacheable, in between.
+ */
+export function resolveHistoryRewriteBoundary(messages: AgentMessage[]): number {
+  return resolvePruneBeforeIndex(messages);
+}
+
 export function pruneProcessedHistoryImages(messages: AgentMessage[]): AgentMessage[] | null {
   const pruneBeforeIndex = resolvePruneBeforeIndex(messages);
   if (pruneBeforeIndex < 0) {

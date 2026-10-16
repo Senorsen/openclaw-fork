@@ -369,6 +369,7 @@ import {
 import { resolveFinalAssistantVisibleText } from "./helpers.js";
 import {
   installHistoryImagePruneContextTransform,
+  resolveHistoryRewriteBoundary,
   pruneProcessedHistoryImages,
 } from "./history-image-prune.js";
 import { detectAndLoadPromptImages } from "./images.js";
@@ -891,9 +892,13 @@ export function normalizeMessagesForLlmBoundary(messages: AgentMessage[]): Agent
 
 function stripHistoricalInboundMetadataFromUserMessages(messages: AgentMessage[]): AgentMessage[] {
   const activeUserMessageIndex = findActiveUserMessageIndex(messages);
+  // Only strip behind the shared, stepped history rewrite boundary. Stripping
+  // the previous user message as soon as a new one arrives rewrote history on
+  // every user turn and invalidated the provider prompt cache from there on.
+  const rewriteBefore = resolveHistoryRewriteBoundary(messages);
   let changed = false;
   const nextMessages = messages.map((message, index) => {
-    if (message.role !== "user" || index === activeUserMessageIndex) {
+    if (message.role !== "user" || index === activeUserMessageIndex || index >= rewriteBefore) {
       return message;
     }
     const content = (message as { content?: unknown }).content;

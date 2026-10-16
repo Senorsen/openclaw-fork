@@ -278,6 +278,19 @@ describe("buildToolSearchRunPlan", () => {
   });
 });
 
+// Ten more completed text turns: enough for the stepped history rewrite
+// boundary (3 kept turns + one step of 8) to move past a leading message.
+function laterTurns(): Array<Record<string, unknown>> {
+  const turns: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < 10; i++) {
+    turns.push(
+      { role: "user", content: [{ type: "text", text: `later ask ${i}` }], timestamp: 10 + i * 2 },
+      { role: "assistant", content: [{ type: "text", text: `later answer ${i}` }], timestamp: 11 + i * 2 },
+    );
+  }
+  return turns;
+}
+
 describe("normalizeMessagesForLlmBoundary", () => {
   it("strips inbound metadata from historical user turns before model replay", () => {
     const historicalEnvelope =
@@ -293,6 +306,7 @@ describe("normalizeMessagesForLlmBoundary", () => {
         content: [{ type: "text", text: "Historical answer" }],
         timestamp: 2,
       },
+      ...laterTurns(),
     ];
 
     const output = normalizeMessagesForLlmBoundary(
@@ -318,6 +332,7 @@ describe("normalizeMessagesForLlmBoundary", () => {
         content: [{ type: "text", text: "Historical answer" }],
         timestamp: 2,
       },
+      ...laterTurns(),
     ];
 
     const output = normalizeMessagesForLlmBoundary(
@@ -343,22 +358,74 @@ describe("normalizeMessagesForLlmBoundary", () => {
         content: [{ type: "text", text: "Historical answer" }],
         timestamp: 2,
       },
+      ...laterTurns(),
       {
         role: "user",
         content: [{ type: "text", text: currentEnvelope }],
-        timestamp: 3,
+        timestamp: 100,
       },
     ];
+    const currentIndex = input.length - 1;
 
     const output = normalizeMessagesForLlmBoundary(
       input as Parameters<typeof normalizeMessagesForLlmBoundary>[0],
     ) as unknown as Array<{ content?: Array<{ text?: string }> }>;
 
     expect(output[0]?.content?.[0]?.text).toBe("Old ask");
-    expect(output[2]?.content?.[0]?.text).toContain(
+    expect(output[currentIndex]?.content?.[0]?.text).toContain(
       "Reply target of current user message (untrusted, for context):",
     );
-    expect(output[2]?.content?.[0]?.text).toContain("quoted status body");
+    expect(output[currentIndex]?.content?.[0]?.text).toContain("quoted status body");
+  });
+
+  it("keeps recent user metadata until the history rewrite boundary steps past it", () => {
+    const envelope =
+      'Conversation info (untrusted metadata):\n```json\n{"channel":"telegram"}\n```\n\nRecent ask';
+    const input = [
+      { role: "user", content: [{ type: "text", text: envelope }], timestamp: 1 },
+      { role: "assistant", content: [{ type: "text", text: "answer" }], timestamp: 2 },
+      { role: "user", content: [{ type: "text", text: "next ask" }], timestamp: 3 },
+    ];
+
+    const output = normalizeMessagesForLlmBoundary(
+      input as Parameters<typeof normalizeMessagesForLlmBoundary>[0],
+    ) as unknown as Array<{ content?: Array<{ text?: string }> }>;
+
+    expect(output[0]?.content?.[0]?.text).toBe(envelope);
+  });
+
+  it("keeps replayed user turns byte-stable between rewrite boundary steps", () => {
+    const envelope = (i: number) =>
+      `Conversation info (untrusted metadata):\n\`\`\`json\n{"message_id":"${i}"}\n\`\`\`\n\nask ${i}`;
+    const history: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 30; i++) {
+      history.push(
+        { role: "user", content: [{ type: "text", text: envelope(i) }], timestamp: i * 2 },
+        { role: "assistant", content: [{ type: "text", text: `answer ${i}` }], timestamp: i * 2 + 1 },
+      );
+    }
+    // Replay as sent with a new user message pending after `completed` turns.
+    const replay = (completed: number) => {
+      const slice = [
+        ...history.slice(0, completed * 2),
+        { role: "user", content: [{ type: "text", text: envelope(completed) }], timestamp: 999 },
+      ];
+      const out = normalizeMessagesForLlmBoundary(
+        slice as Parameters<typeof normalizeMessagesForLlmBoundary>[0],
+      );
+      // Compare everything before the pending message, which is the cached prefix.
+      return JSON.stringify(out.slice(0, completed * 2));
+    };
+
+    const rewrites: number[] = [];
+    for (let completed = 2; completed <= 30; completed++) {
+      const previousPrefix = replay(completed - 1);
+      if (!replay(completed).startsWith(previousPrefix.slice(0, -1))) {
+        rewrites.push(completed);
+      }
+    }
+    // Same steps as the history media prune: rewrites only at 3 + 8k turns.
+    expect(rewrites).toEqual([11, 19, 27]);
   });
 
   it("preserves current user inbound metadata through tool-result continuation", () => {
