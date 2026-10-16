@@ -79,6 +79,8 @@ export type FollowupRun = {
     senderUsername?: string;
     senderE164?: string;
     senderIsOwner?: boolean;
+    /** Owner whose ownership is withheld for this run; owner-only tools stay listed. */
+    keepOwnerOnlyToolsVisible?: boolean;
     traceAuthorized?: boolean;
     sessionFile: string;
     workspaceDir: string;

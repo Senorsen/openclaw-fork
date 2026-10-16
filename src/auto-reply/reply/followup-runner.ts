@@ -698,6 +698,7 @@ export function createFollowupRunner(params: {
                 senderUsername: run.senderUsername,
                 senderE164: run.senderE164,
                 senderIsOwner: run.senderIsOwner,
+                keepOwnerOnlyToolsVisible: run.keepOwnerOnlyToolsVisible,
                 sessionFile: run.sessionFile,
                 agentDir: run.agentDir,
                 workspaceDir: run.workspaceDir,

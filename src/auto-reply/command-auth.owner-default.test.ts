@@ -146,6 +146,48 @@ describe("senderIsOwner only reflects explicit owner authorization", () => {
     expect(auth.senderIsOwner).toBe(true);
   });
 
+  it("reports a run-scoped owner downgrade separately from non-owners", () => {
+    const cfg = {
+      channels: { discord: {} },
+      commands: { ownerAllowFrom: ["456"] },
+    } as OpenClawConfig;
+    const authFor = (senderId: string) =>
+      resolveCommandAuthorization({
+        ctx: {
+          Provider: "discord",
+          Surface: "discord",
+          From: `discord:${senderId}`,
+          SenderId: senderId,
+          ForceSenderIsOwnerFalse: true,
+        } as MsgContext,
+        cfg,
+        commandAuthorized: true,
+      });
+
+    const owner = authFor("456");
+    expect(owner.senderIsOwner).toBe(false);
+    expect(owner.senderOwnerDowngraded).toBe(true);
+
+    const stranger = authFor("789");
+    expect(stranger.senderIsOwner).toBe(false);
+    expect(stranger.senderOwnerDowngraded).toBe(false);
+  });
+
+  it("does not report a downgrade when ownership is not forced off", () => {
+    const auth = resolveCommandAuthorization({
+      ctx: {
+        Provider: "discord",
+        Surface: "discord",
+        From: "discord:456",
+        SenderId: "456",
+      } as MsgContext,
+      cfg: { channels: { discord: {} }, commands: { ownerAllowFrom: ["456"] } } as OpenClawConfig,
+      commandAuthorized: true,
+    });
+    expect(auth.senderIsOwner).toBe(true);
+    expect(auth.senderOwnerDowngraded).toBe(false);
+  });
+
   it("senderIsOwner is true when ownerAllowFrom is wildcard (*)", () => {
     const cfg = {
       channels: { discord: {} },

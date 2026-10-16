@@ -81,6 +81,7 @@ export function buildEmbeddedRunBaseParams(params: {
     ownerNumbers: params.run.ownerNumbers,
     inputProvenance: params.run.inputProvenance,
     senderIsOwner: params.run.senderIsOwner,
+    keepOwnerOnlyToolsVisible: params.run.keepOwnerOnlyToolsVisible,
     enforceFinalTag: resolveEnforceFinalTagWithResolver(
       params.run,
       params.provider,

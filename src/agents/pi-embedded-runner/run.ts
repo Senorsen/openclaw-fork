@@ -1496,6 +1496,7 @@ export async function runEmbeddedPiAgent(
             jobId: params.jobId,
             toolsAllow: params.toolsAllow,
             ownerOnlyToolAllowlist: params.ownerOnlyToolAllowlist,
+            keepOwnerOnlyToolsVisible: params.keepOwnerOnlyToolsVisible,
             disableMessageTool: params.disableMessageTool,
             forceMessageTool: params.forceMessageTool,
             enableHeartbeatTool: params.enableHeartbeatTool,

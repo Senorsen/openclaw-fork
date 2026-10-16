@@ -131,6 +131,58 @@ describe("tool-policy", () => {
     });
   });
 
+  it("keeps owner-only tools listed but refuses to run them when asked to stay visible", async () => {
+    const tools = createOwnerPolicyTools();
+    const kept = applyOwnerOnlyToolPolicy(tools, false, undefined, {
+      keepUnauthorizedVisible: true,
+    });
+    // Same tools, same order, same definitions as an owner run sees.
+    expect(kept.map((t) => t.name)).toEqual(
+      applyOwnerOnlyToolPolicy(tools, true).map((t) => t.name),
+    );
+    for (const name of ["cron", "gateway", "nodes"]) {
+      const tool = kept.find((t) => t.name === name);
+      const original = tools.find((t) => t.name === name);
+      expect(tool?.description).toBe(original?.description);
+      expect(tool?.parameters).toBe(original?.parameters);
+      await expect(tool?.execute?.("call_1", {})).rejects.toThrow(
+        "Tool restricted to owner senders.",
+      );
+    }
+    await expect(kept.find((t) => t.name === "read")?.execute?.("call_1", {})).resolves.toEqual({
+      content: [],
+      details: {},
+    });
+  });
+
+  it("still lets explicitly granted owner-only tools run when kept visible", async () => {
+    const kept = applyOwnerOnlyToolPolicy(createOwnerPolicyTools(), false, ["cron"], {
+      keepUnauthorizedVisible: true,
+    });
+    await expect(kept.find((t) => t.name === "cron")?.execute?.("call_1", {})).resolves.toEqual({
+      content: [],
+      details: {},
+    });
+    await expect(kept.find((t) => t.name === "gateway")?.execute?.("call_1", {})).rejects.toThrow(
+      "Tool restricted to owner senders.",
+    );
+  });
+
+  it("guards tools that are owner-only by name when kept visible", async () => {
+    // No ownerOnly flag: owner-only purely through the core name fallback.
+    const tools = [
+      { name: "gateway", execute: async () => ({ content: [], details: {} }) as any },
+    ] as unknown as AnyAgentTool[];
+    expect(applyOwnerOnlyToolPolicy(tools, false)).toStrictEqual([]);
+    const kept = applyOwnerOnlyToolPolicy(tools, false, undefined, {
+      keepUnauthorizedVisible: true,
+    });
+    expect(kept.map((t) => t.name)).toEqual(["gateway"]);
+    await expect(kept[0]?.execute?.("call_1", {})).rejects.toThrow(
+      "Tool restricted to owner senders.",
+    );
+  });
+
   it("honors ownerOnly metadata for custom tool names", () => {
     const tools = [
       {

@@ -458,6 +458,11 @@ export function createOpenClawCodingTools(options?: {
    * Keep this narrowly scoped; it is not a replacement for sender ownership.
    */
   ownerOnlyToolAllowlist?: string[];
+  /**
+   * Keep owner-only tools listed (but non-executable) when the owner's turn was
+   * downgraded to non-owner for this run, so the tool list stays cache-stable.
+   */
+  keepOwnerOnlyToolsVisible?: boolean;
   /** Auth profiles already loaded for this run; used for prompt-time tool availability. */
   authProfileStore?: AuthProfileStore;
   /** Callback invoked when sessions_yield tool is called. */
@@ -1020,6 +1025,7 @@ export function createOpenClawCodingTools(options?: {
     toolsForModelProvider,
     senderIsOwner,
     options?.ownerOnlyToolAllowlist,
+    { keepUnauthorizedVisible: options?.keepOwnerOnlyToolsVisible === true },
   );
   const subagentFiltered = applyToolPolicyPipeline({
     tools: toolsByAuthorization,

@@ -15,6 +15,8 @@ export type CommandContext = {
   channelId?: ChannelId;
   ownerList: string[];
   senderIsOwner: boolean;
+  /** See CommandAuthorization.senderOwnerDowngraded. */
+  senderOwnerDowngraded?: boolean;
   isAuthorizedSender: boolean;
   senderId?: string;
   abortKey?: string;

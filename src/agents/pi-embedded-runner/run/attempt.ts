@@ -1383,6 +1383,7 @@ export async function runEmbeddedAttempt(
             senderE164: params.senderE164,
             senderIsOwner: params.senderIsOwner,
             ownerOnlyToolAllowlist: params.ownerOnlyToolAllowlist,
+            keepOwnerOnlyToolsVisible: params.keepOwnerOnlyToolsVisible,
             allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
             sessionKey: sandboxSessionKey,
             // When sandboxSessionKey differs from the real run session key (e.g. Telegram
@@ -1675,6 +1676,7 @@ export async function runEmbeddedAttempt(
       senderE164: params.senderE164,
       senderIsOwner: params.senderIsOwner,
       ownerOnlyToolAllowlist: params.ownerOnlyToolAllowlist,
+      keepOwnerOnlyToolsVisible: params.keepOwnerOnlyToolsVisible,
       warn: (message) => log.warn(message),
     });
     const uncompactedEffectiveTools = [...tools, ...filteredBundledTools];

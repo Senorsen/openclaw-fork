@@ -49,11 +49,19 @@ function isOwnerOnlyTool(tool: AnyAgentTool) {
 /**
  * Filters owner-only tools unless the sender is an owner or a server-side
  * runtime grant authorizes a specific owner-only tool for this run.
+ *
+ * With `keepUnauthorizedVisible`, unauthorized owner-only tools stay in the
+ * list but refuse to execute. This is for turns where the owner's own session
+ * was downgraded for one run (for example because it carries untrusted
+ * exec/system events): the tool list is the head of the provider prompt, so
+ * dropping tools for one turn would invalidate the whole prompt cache, while
+ * the execution guard still enforces the downgrade.
  */
 export function applyOwnerOnlyToolPolicy(
   tools: AnyAgentTool[],
   senderIsOwner: boolean,
   ownerOnlyToolAllowlist?: string[],
+  options?: { keepUnauthorizedVisible?: boolean },
 ) {
   const allowedOwnerOnlyTools = new Set(
     ownerOnlyToolAllowlist?.map((name) => normalizeToolName(name)) ?? [],
@@ -69,7 +77,26 @@ export function applyOwnerOnlyToolPolicy(
   if (senderIsOwner) {
     return withGuard;
   }
+  if (options?.keepUnauthorizedVisible === true) {
+    return withGuard.map((tool) =>
+      isOwnerOnlyTool(tool) && !isAuthorized(tool) ? refuseToolExecution(tool) : tool,
+    );
+  }
   return withGuard.filter((tool) => !isOwnerOnlyTool(tool) || isAuthorized(tool));
+}
+
+// Unlike wrapOwnerOnlyToolExecution, this also guards tools that are owner-only
+// by name only, since they are kept in the list here instead of being removed.
+function refuseToolExecution(tool: AnyAgentTool): AnyAgentTool {
+  if (!tool.execute) {
+    return tool;
+  }
+  return {
+    ...tool,
+    execute: async () => {
+      throw new Error("Tool restricted to owner senders.");
+    },
+  };
 }
 
 export type ToolPolicyLike = {

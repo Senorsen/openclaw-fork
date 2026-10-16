@@ -77,6 +77,12 @@ export type RunEmbeddedPiAgentParams = {
    * This must stay narrow; it does not make the sender an owner.
    */
   ownerOnlyToolAllowlist?: string[];
+  /**
+   * The sender is an owner whose ownership was withheld for this run only
+   * (untrusted system events in the turn). Owner-only tools stay listed but
+   * refuse to execute, keeping the tool list and system prompt cache-stable.
+   */
+  keepOwnerOnlyToolsVisible?: boolean;
   /** Current channel ID for auto-threading (Slack). */
   currentChannelId?: string;
   /** Current thread timestamp for auto-threading (Slack). */

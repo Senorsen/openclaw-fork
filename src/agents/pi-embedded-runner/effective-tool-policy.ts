@@ -59,6 +59,7 @@ type FinalEffectiveToolPolicyParams = {
   senderE164?: string | null;
   senderIsOwner?: boolean;
   ownerOnlyToolAllowlist?: string[];
+  keepOwnerOnlyToolsVisible?: boolean;
   warn: (message: string) => void;
 };
 
@@ -148,6 +149,7 @@ export function applyFinalEffectiveToolPolicy(
     params.bundledTools,
     params.senderIsOwner === true,
     params.ownerOnlyToolAllowlist,
+    { keepUnauthorizedVisible: params.keepOwnerOnlyToolsVisible === true },
   );
   // Suppress unavailable-core-tool warnings on every step of this pass.
   // `applyToolPolicyPipeline` infers `coreToolNames` from the `tools` array

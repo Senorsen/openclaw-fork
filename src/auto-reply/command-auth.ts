@@ -25,6 +25,8 @@ export type CommandAuthorization = {
   ownerList: string[];
   senderId?: string;
   senderIsOwner: boolean;
+  /** The sender is an owner, but ownership was withheld for this run (ForceSenderIsOwnerFalse). */
+  senderOwnerDowngraded: boolean;
   isAuthorizedSender: boolean;
   from?: string;
   to?: string;
@@ -700,9 +702,10 @@ export function resolveCommandAuthorization(params: {
     Array.isArray(ctx.GatewayClientScopes) &&
     ctx.GatewayClientScopes.includes("operator.admin");
   const ownerAllowlistConfigured = ownerState.ownerAllowAll || ownerState.explicitOwners.length > 0;
-  const senderIsOwner = ctx.ForceSenderIsOwnerFalse
-    ? false
-    : senderIsOwnerByIdentity || senderIsOwnerByScope || ownerState.ownerAllowAll;
+  const senderIsOwnerUnforced =
+    senderIsOwnerByIdentity || senderIsOwnerByScope || ownerState.ownerAllowAll;
+  const senderIsOwner = ctx.ForceSenderIsOwnerFalse ? false : senderIsOwnerUnforced;
+  const senderOwnerDowngraded = Boolean(ctx.ForceSenderIsOwnerFalse) && senderIsOwnerUnforced;
   const requireOwner = enforceOwner || ownerAllowlistConfigured;
   const isOwnerForCommands = !requireOwner
     ? true
@@ -729,6 +732,7 @@ export function resolveCommandAuthorization(params: {
     ownerList: ownerState.ownerList,
     senderId: senderId || undefined,
     senderIsOwner,
+    senderOwnerDowngraded,
     isAuthorizedSender,
     from: from || undefined,
     to: to || undefined,
