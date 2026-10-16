@@ -7,7 +7,10 @@ import { createAgentSession } from "@earendil-works/pi-coding-agent";
 import { isAcpRuntimeSpawnAvailable } from "../../../acp/runtime/availability.js";
 import { buildHierarchyReinforcementMessage } from "../../../auto-reply/handoff-summarizer.js";
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
-import { stripInboundMetadata } from "../../../auto-reply/reply/strip-inbound-meta.js";
+import {
+  INBOUND_IDENTITY_META_SENTINELS,
+  stripInboundMetadata,
+} from "../../../auto-reply/reply/strip-inbound-meta.js";
 import { getRuntimeConfig } from "../../../config/config.js";
 import { resolveStorePath } from "../../../config/sessions/paths.js";
 import {
@@ -903,7 +906,9 @@ function stripHistoricalInboundMetadataFromUserMessages(messages: AgentMessage[]
     }
     const content = (message as { content?: unknown }).content;
     if (typeof content === "string") {
-      const stripped = stripInboundMetadata(content);
+      const stripped = stripInboundMetadata(content, {
+        keepSentinels: INBOUND_IDENTITY_META_SENTINELS,
+      });
       if (stripped === content) {
         return message;
       }
@@ -922,7 +927,9 @@ function stripHistoricalInboundMetadataFromUserMessages(messages: AgentMessage[]
       if (textBlock.type !== "text" || typeof textBlock.text !== "string") {
         return block;
       }
-      const stripped = stripInboundMetadata(textBlock.text);
+      const stripped = stripInboundMetadata(textBlock.text, {
+        keepSentinels: INBOUND_IDENTITY_META_SENTINELS,
+      });
       if (stripped === textBlock.text) {
         return block;
       }

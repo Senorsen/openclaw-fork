@@ -48,6 +48,17 @@ function isInboundMetaSentinelLine(line: string): boolean {
   return INBOUND_META_SENTINELS.some((sentinel) => sentinel === trimmed);
 }
 
+/**
+ * The small, fixed-size identity blocks (who sent it, in which chat). Prompt
+ * replay keeps these on historical user turns: stripping them rewrote the
+ * previous user message on every new turn and invalidated the provider prompt
+ * cache, while keeping them costs only a few hundred characters per message.
+ */
+export const INBOUND_IDENTITY_META_SENTINELS: readonly string[] = [
+  CONVERSATION_INFO_SENTINEL,
+  SENDER_INFO_SENTINEL,
+];
+
 function restoreNeutralizedMarkdownFences(value: unknown): unknown {
   if (typeof value === "string") {
     return value.replaceAll("`\u200b``", "```");
@@ -183,10 +194,14 @@ function stripActiveMemoryPromptPrefixBlocks(lines: string[]): string[] {
  * Returns the original string reference unchanged when no metadata is present
  * (fast path — zero allocation).
  */
-export function stripInboundMetadata(text: string): string {
+export function stripInboundMetadata(
+  text: string,
+  options?: { keepSentinels?: readonly string[] },
+): string {
   if (!text) {
     return text;
   }
+  const keepSentinels = options?.keepSentinels;
 
   const withoutTimestamp = text.replace(LEADING_TIMESTAMP_PREFIX_RE, "");
   if (!SENTINEL_FAST_RE.test(withoutTimestamp)) {
@@ -198,9 +213,18 @@ export function stripInboundMetadata(text: string): string {
   const result: string[] = [];
   let inMetaBlock = false;
   let inFencedJson = false;
+  // When some blocks are kept, a stripped block must take its trailing blank
+  // separator with it, or the kept blocks end up with doubled gaps.
+  let skipBlankAfterStrippedBlock = false;
 
   for (let i = 0; i < strippedLeadingPrefixLines.length; i++) {
     const line = strippedLeadingPrefixLines[i];
+    if (skipBlankAfterStrippedBlock) {
+      if (line.trim() === "") {
+        continue;
+      }
+      skipBlankAfterStrippedBlock = false;
+    }
 
     // Channel untrusted context is appended by OpenClaw as a terminal metadata suffix.
     // When this structured header appears, drop it and everything that follows.
@@ -213,6 +237,22 @@ export function stripInboundMetadata(text: string): string {
       const next = strippedLeadingPrefixLines[i + 1];
       if (next?.trim() !== "```json") {
         result.push(line);
+        continue;
+      }
+      if (keepSentinels?.includes(line.trim())) {
+        // Copy the kept block through verbatim, including its closing fence
+        // and the blank separator that follows it.
+        result.push(line);
+        let j = i + 1;
+        while (j < strippedLeadingPrefixLines.length) {
+          const blockLine = strippedLeadingPrefixLines[j];
+          result.push(blockLine);
+          j += 1;
+          if (j > i + 2 && blockLine.trim() === "```") {
+            break;
+          }
+        }
+        i = j - 1;
         continue;
       }
       inMetaBlock = true;
@@ -229,6 +269,7 @@ export function stripInboundMetadata(text: string): string {
         if (line.trim() === "```") {
           inMetaBlock = false;
           inFencedJson = false;
+          skipBlankAfterStrippedBlock = keepSentinels !== undefined;
         }
         continue;
       }

@@ -45,6 +45,47 @@ User prefers aisle seats and extra buffer on connections.
 </active_memory_plugin>`;
 
 describe("stripInboundMetadata", () => {
+  it("keeps requested blocks verbatim and strips the rest", () => {
+    const text = [
+      "Conversation info (untrusted metadata):",
+      "```json",
+      '{"chat_id":"telegram:1"}',
+      "```",
+      "",
+      "Forwarded message context (untrusted metadata):",
+      "```json",
+      '{"from":"someone"}',
+      "```",
+      "",
+      "Sender (untrusted metadata):",
+      "```json",
+      '{"id":"1"}',
+      "```",
+      "",
+      "hello",
+    ].join("\n");
+    const kept = stripInboundMetadata(text, {
+      keepSentinels: ["Conversation info (untrusted metadata):", "Sender (untrusted metadata):"],
+    });
+    expect(kept).toBe(
+      [
+        "Conversation info (untrusted metadata):",
+        "```json",
+        '{"chat_id":"telegram:1"}',
+        "```",
+        "",
+        "Sender (untrusted metadata):",
+        "```json",
+        '{"id":"1"}',
+        "```",
+        "",
+        "hello",
+      ].join("\n"),
+    );
+    // Default behaviour (UI display etc.) is unchanged.
+    expect(stripInboundMetadata(text)).toBe("hello");
+  });
+
   it("fast-path: returns same string when no sentinels present", () => {
     const text = "Hello, how are you?";
     expect(stripInboundMetadata(text)).toBe(text);

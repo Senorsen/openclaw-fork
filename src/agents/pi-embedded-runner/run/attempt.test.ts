@@ -292,9 +292,12 @@ function laterTurns(): Array<Record<string, unknown>> {
 }
 
 describe("normalizeMessagesForLlmBoundary", () => {
-  it("strips inbound metadata from historical user turns before model replay", () => {
+  it("keeps identity metadata but strips other inbound blocks from historical user turns", () => {
+    const identity =
+      'Conversation info (untrusted metadata):\n```json\n{"channel":"telegram","chatType":"dm"}\n```\n\nSender (untrusted metadata):\n```json\n{"id":"user-1"}\n```\n\n';
     const historicalEnvelope =
-      'Conversation info (untrusted metadata):\n```json\n{"channel":"telegram","chatType":"dm"}\n```\n\nSender (untrusted metadata):\n```json\n{"id":"user-1"}\n```\n\nActual historical ask';
+      identity +
+      'Reply target of current user message (untrusted, for context):\n```json\n{"body":"long quoted text"}\n```\n\nActual historical ask';
     const input = [
       {
         role: "user",
@@ -313,10 +316,10 @@ describe("normalizeMessagesForLlmBoundary", () => {
       input as Parameters<typeof normalizeMessagesForLlmBoundary>[0],
     ) as unknown as Array<{ content?: Array<{ text?: string }> }>;
 
-    expect(output[0]?.content?.[0]?.text).toBe("Actual historical ask");
-    expect(JSON.stringify(output)).not.toContain("Conversation info");
-    expect(JSON.stringify(output)).not.toContain("Sender (untrusted metadata)");
-    expect(JSON.stringify(input)).toContain("Conversation info");
+    expect(output[0]?.content?.[0]?.text).toBe(`${identity}Actual historical ask`);
+    expect(JSON.stringify(output)).not.toContain("Reply target of current user message");
+    expect(JSON.stringify(output)).not.toContain("long quoted text");
+    expect(JSON.stringify(input)).toContain("long quoted text");
   });
 
   it("strips inbound metadata from string historical user turns", () => {
@@ -324,7 +327,7 @@ describe("normalizeMessagesForLlmBoundary", () => {
       {
         role: "user",
         content:
-          'Conversation info (untrusted metadata):\n```json\n{"channel":"telegram"}\n```\n\nPlain historical ask',
+          'Forwarded message context (untrusted metadata):\n```json\n{"from":"someone"}\n```\n\nPlain historical ask',
         timestamp: 1,
       },
       {
@@ -371,7 +374,7 @@ describe("normalizeMessagesForLlmBoundary", () => {
       input as Parameters<typeof normalizeMessagesForLlmBoundary>[0],
     ) as unknown as Array<{ content?: Array<{ text?: string }> }>;
 
-    expect(output[0]?.content?.[0]?.text).toBe("Old ask");
+    expect(output[0]?.content?.[0]?.text).toBe(historicalEnvelope);
     expect(output[currentIndex]?.content?.[0]?.text).toContain(
       "Reply target of current user message (untrusted, for context):",
     );
@@ -424,7 +427,37 @@ describe("normalizeMessagesForLlmBoundary", () => {
         rewrites.push(completed);
       }
     }
-    // Same steps as the history media prune: rewrites only at 3 + 8k turns.
+    // Identity metadata is never stripped, so the replay is never rewritten.
+    expect(rewrites).toEqual([]);
+  });
+
+  it("strips other inbound blocks only on the stepped rewrite boundary", () => {
+    const envelope = (i: number) =>
+      `Conversation info (untrusted metadata):\n\`\`\`json\n{"message_id":"${i}"}\n\`\`\`\n\n` +
+      `Forwarded message context (untrusted metadata):\n\`\`\`json\n{"from":"x${i}"}\n\`\`\`\n\nask ${i}`;
+    const history: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 30; i++) {
+      history.push(
+        { role: "user", content: [{ type: "text", text: envelope(i) }], timestamp: i * 2 },
+        { role: "assistant", content: [{ type: "text", text: `answer ${i}` }], timestamp: i * 2 + 1 },
+      );
+    }
+    const replay = (completed: number) => {
+      const slice = [
+        ...history.slice(0, completed * 2),
+        { role: "user", content: [{ type: "text", text: envelope(completed) }], timestamp: 999 },
+      ];
+      const out = normalizeMessagesForLlmBoundary(
+        slice as Parameters<typeof normalizeMessagesForLlmBoundary>[0],
+      );
+      return JSON.stringify(out.slice(0, completed * 2));
+    };
+    const rewrites: number[] = [];
+    for (let completed = 2; completed <= 30; completed++) {
+      if (!replay(completed).startsWith(replay(completed - 1).slice(0, -1))) {
+        rewrites.push(completed);
+      }
+    }
     expect(rewrites).toEqual([11, 19, 27]);
   });
 
