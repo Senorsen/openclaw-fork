@@ -7,6 +7,7 @@ import {
   acquireSessionWriteLock,
   resolveSessionWriteLockOptions,
 } from "../../agents/session-write-lock.js";
+import { recordOwnedSessionFileWriteFromDisk } from "../../agents/session-file-owned-writes.js";
 import { redactTranscriptMessage } from "../../agents/transcript-redact.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { redactSecrets } from "../../logging/redact.js";
@@ -308,6 +309,10 @@ async function appendSessionTranscriptMessageLocked<TMessage>(
       message: finalMessage,
     };
     await fs.appendFile(params.transcriptPath, `${JSON.stringify(entry)}\n`, "utf-8");
+    // Still under the session write lock: mark this as an in-process write so
+    // an embedded attempt whose prompt lock is released does not mistake it for
+    // a session takeover.
+    await recordOwnedSessionFileWriteFromDisk(params.transcriptPath);
     return { messageId, message: finalMessage };
   } finally {
     await lock.release();

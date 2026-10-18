@@ -1244,6 +1244,8 @@ export async function runEmbeddedAttempt(
     | undefined;
   let beforeAgentRunBlocked = false;
   let beforeAgentRunBlockedBy: string | undefined;
+  // Releases the eager session lock if post-prompt code exits before cleanup.
+  let releaseRetainedSessionLock: (() => Promise<void>) | undefined;
   try {
     const skillsSnapshotForRun =
       sandbox?.enabled && sandbox.workspaceAccess !== "rw" ? undefined : params.skillsSnapshot;
@@ -2048,7 +2050,15 @@ export async function runEmbeddedAttempt(
         sessionFile: params.sessionFile,
         ...sessionWriteLockOptions,
       },
+      abortSignal: runAbortController.signal,
+      onDrainTimeout: ({ waitedMs, compacting }) => {
+        log.warn(
+          `session event queue drain timed out; continuing without it: runId=${params.runId} ` +
+            `sessionId=${params.sessionId} waitedMs=${waitedMs} compacting=${compacting}`,
+        );
+      },
     });
+    releaseRetainedSessionLock = () => sessionLockController.dispose();
 
     let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -3794,8 +3804,8 @@ export async function runEmbeddedAttempt(
             }
             installPromptSubmissionLockRelease({
               session: activeSession,
-              waitForSessionEvents: (sessionToDrain) =>
-                sessionLockController.waitForSessionEvents(sessionToDrain),
+              waitForSessionEvents: (sessionToDrain, drainOptions) =>
+                sessionLockController.waitForSessionEvents(sessionToDrain, drainOptions),
               releaseForPrompt: () => sessionLockController.releaseForPrompt(),
             });
           }
@@ -4858,6 +4868,13 @@ export async function runEmbeddedAttempt(
       }
     }
   } finally {
+    try {
+      await releaseRetainedSessionLock?.();
+    } catch (releaseErr) {
+      log.error(
+        `failed to release retained session lock on attempt teardown: runId=${params.runId} ${String(releaseErr)}`,
+      );
+    }
     emitDiagnosticRunCompleted?.(
       aborted ? "aborted" : "error",
       promptError ?? new Error("run exited before diagnostic completion"),

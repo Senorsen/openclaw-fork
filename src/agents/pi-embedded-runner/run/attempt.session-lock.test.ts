@@ -4,6 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionWriteLockTimeoutError } from "../../session-write-lock-error.js";
 import {
+  recordOwnedSessionFileWriteFromDisk,
+  resetOwnedSessionFileWritesForTest,
+} from "../../session-file-owned-writes.js";
+import {
   createEmbeddedAttemptSessionLockController,
   EmbeddedAttemptSessionTakeoverError,
   installPromptSubmissionLockRelease,
@@ -21,6 +25,8 @@ const lockOptions = {
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
+  resetOwnedSessionFileWritesForTest();
   for (const dir of tempDirs.splice(0)) {
     await fs.rm(dir, { recursive: true, force: true });
   }
@@ -253,7 +259,7 @@ describe("embedded attempt session lock lifecycle", () => {
 
     await session.agent.streamFn("model", "context");
 
-    expect(waitForSessionEvents).toHaveBeenCalledWith(session);
+    expect(waitForSessionEvents).toHaveBeenCalledWith(session, expect.any(Object));
     expect(releaseForPrompt).toHaveBeenCalledTimes(1);
     expect(streamFn).toHaveBeenCalledWith("model", "context");
     expect(events).toEqual(["drain", "release", "stream"]);
@@ -458,5 +464,201 @@ describe("embedded attempt session lock lifecycle", () => {
     await hookPromise;
 
     expect(events).toEqual(["queue-drained", "lock", "hook-start", "hook-end"]);
+  });
+});
+
+describe("embedded attempt session lock deadlock guards", () => {
+  it("submits compaction summaries without draining the event queue it runs inside", async () => {
+    // Auto-compaction runs inside the queued agent_end event and calls
+    // agent.streamFn. Draining that queue from the wrapper would wait on itself.
+    const events: string[] = [];
+    const streamFn = vi.fn(async (..._args: unknown[]) => {
+      events.push("stream");
+      return "summary";
+    });
+    const waitForSessionEvents = vi.fn(async () => {
+      events.push("drain");
+    });
+    const releaseForPrompt = vi.fn(async () => {
+      events.push("release");
+    });
+    const session = { agent: { streamFn }, isCompacting: true };
+
+    installPromptSubmissionLockRelease({ session, waitForSessionEvents, releaseForPrompt });
+
+    await expect(session.agent.streamFn("model", "context")).resolves.toBe("summary");
+    expect(waitForSessionEvents).not.toHaveBeenCalled();
+    expect(releaseForPrompt).not.toHaveBeenCalled();
+    expect(events).toEqual(["stream"]);
+  });
+
+  it("does not deadlock when compaction inside a queued event submits through the wrapper", async () => {
+    const acquireSessionWriteLock = vi.fn(async () => ({ release: vi.fn(async () => {}) }));
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions,
+    });
+    const streamFn = vi.fn(async (..._args: unknown[]) => "summary");
+    const session: {
+      agent: { streamFn: (...args: unknown[]) => unknown };
+      isCompacting: boolean;
+      _agentEventQueue?: Promise<unknown>;
+    } = { agent: { streamFn }, isCompacting: false };
+    installPromptSubmissionLockRelease({
+      session,
+      waitForSessionEvents: (target, options) => controller.waitForSessionEvents(target, options),
+      releaseForPrompt: () => controller.releaseForPrompt(),
+    });
+
+    // Simulate Pi: agent_end processing (queued) starts auto-compaction, which
+    // calls agent.streamFn while the queue still contains that very event.
+    session._agentEventQueue = Promise.resolve().then(async () => {
+      session.isCompacting = true;
+      try {
+        return await session.agent.streamFn("model", "summarize");
+      } finally {
+        session.isCompacting = false;
+      }
+    });
+
+    await expect(session._agentEventQueue).resolves.toBe("summary");
+    expect(streamFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds the queued-event drain instead of waiting forever", async () => {
+    vi.useFakeTimers();
+    const acquireSessionWriteLock = vi.fn(async () => ({ release: vi.fn(async () => {}) }));
+    const onDrainTimeout = vi.fn();
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions,
+      onDrainTimeout,
+    });
+    const session = { _agentEventQueue: new Promise<void>(() => {}) };
+
+    const drained = controller.waitForSessionEvents(session, { timeoutMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(drained).resolves.toBeUndefined();
+    expect(onDrainTimeout).toHaveBeenCalledWith(
+      expect.objectContaining({ compacting: false }),
+    );
+  });
+
+  it("keeps waiting for a live compaction but still honors the hard cap", async () => {
+    vi.useFakeTimers();
+    const acquireSessionWriteLock = vi.fn(async () => ({ release: vi.fn(async () => {}) }));
+    const onDrainTimeout = vi.fn();
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions,
+      onDrainTimeout,
+    });
+    const session = { _agentEventQueue: new Promise<void>(() => {}), isCompacting: true };
+    let settled = false;
+
+    const drained = controller
+      .waitForSessionEvents(session, { timeoutMs: 1_000, maxCompactionWaitMs: 5_000 })
+      .then(() => {
+        settled = true;
+      });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(2_500);
+    await drained;
+    expect(settled).toBe(true);
+    expect(onDrainTimeout).toHaveBeenCalledWith(expect.objectContaining({ compacting: true }));
+  });
+
+  it("stops draining as soon as the run is aborted", async () => {
+    const abortController = new AbortController();
+    const acquireSessionWriteLock = vi.fn(async () => ({ release: vi.fn(async () => {}) }));
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions,
+      abortSignal: abortController.signal,
+    });
+    const session = { _agentEventQueue: new Promise<void>(() => {}), isCompacting: true };
+
+    const drained = controller.waitForSessionEvents(session);
+    abortController.abort();
+    await expect(drained).resolves.toBeUndefined();
+
+    const cleanupLock = await controller.acquireForCleanup({ session });
+    await cleanupLock.release();
+    expect(acquireSessionWriteLock).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the eagerly-held attempt lock on dispose when cleanup is skipped", async () => {
+    const releases: string[] = [];
+    const acquireSessionWriteLock = vi
+      .fn()
+      .mockResolvedValueOnce({ release: vi.fn(async () => releases.push("held")) });
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions,
+    });
+
+    await controller.dispose();
+    await controller.dispose();
+
+    expect(acquireSessionWriteLock).toHaveBeenCalledTimes(1);
+    expect(releases).toEqual(["held"]);
+  });
+
+  it("dispose does not double-release a lock already handed to cleanup", async () => {
+    const releases: string[] = [];
+    const acquireSessionWriteLock = vi
+      .fn()
+      .mockResolvedValueOnce({ release: vi.fn(async () => releases.push("held")) });
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions,
+    });
+
+    const cleanupLock = await controller.acquireForCleanup();
+    await cleanupLock.release();
+    await controller.dispose();
+
+    expect(releases).toEqual(["held"]);
+  });
+
+  it("accepts in-process locked transcript writes made while the prompt lock is released", async () => {
+    const sessionFile = await createTempSessionFile();
+    const acquireSessionWriteLock = vi.fn(async () => ({ release: vi.fn(async () => {}) }));
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions: { ...lockOptions, sessionFile },
+    });
+    await controller.releaseForPrompt();
+
+    // e.g. delivery mirror / compaction notice appended by this process.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await fs.appendFile(sessionFile, '{"type":"message","id":"mirror"}\n', "utf8");
+    await recordOwnedSessionFileWriteFromDisk(sessionFile);
+
+    const written: string[] = [];
+    await controller.withSessionWriteLock(async () => {
+      written.push("post-prompt");
+    });
+    expect(written).toEqual(["post-prompt"]);
+    expect(controller.hasSessionTakeover()).toBe(false);
+  });
+
+  it("still rejects unowned external changes after the prompt lock is released", async () => {
+    const sessionFile = await createTempSessionFile();
+    const acquireSessionWriteLock = vi.fn(async () => ({ release: vi.fn(async () => {}) }));
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions: { ...lockOptions, sessionFile },
+    });
+    await controller.releaseForPrompt();
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await fs.appendFile(sessionFile, '{"type":"message","id":"external"}\n', "utf8");
+
+    await expect(controller.withSessionWriteLock(async () => {})).rejects.toBeInstanceOf(
+      EmbeddedAttemptSessionTakeoverError,
+    );
+    expect(controller.hasSessionTakeover()).toBe(true);
   });
 });

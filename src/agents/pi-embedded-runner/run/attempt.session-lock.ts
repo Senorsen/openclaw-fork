@@ -1,5 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs/promises";
+import {
+  currentOwnedSessionFileGeneration,
+  getOwnedSessionFileWrite,
+  recordOwnedSessionFileWrite,
+  sameOwnedSessionFileFingerprint,
+} from "../../session-file-owned-writes.js";
 import { isSessionWriteLockTimeoutError } from "../../session-write-lock-error.js";
 import type { acquireSessionWriteLock } from "../../session-write-lock.js";
 
@@ -146,22 +152,125 @@ async function readSessionFileFingerprint(sessionFile: string): Promise<SessionF
   }
 }
 
-async function waitForSessionEventQueue(session: unknown): Promise<void> {
+/**
+ * Upper bound for draining queued Pi session events. The drain only orders
+ * transcript writes; it must never be able to hold a run (and its session
+ * lane) forever. A queued event that is itself waiting on the caller would
+ * otherwise deadlock the session until the process restarts.
+ */
+export const SESSION_EVENT_QUEUE_DRAIN_TIMEOUT_MS = 30_000;
+
+/**
+ * Hard cap while the queue is busy with a live compaction. Compaction can
+ * legitimately run for minutes on large transcripts, so the normal drain
+ * timeout extends while Pi reports it is compacting, but never past this.
+ */
+export const SESSION_EVENT_QUEUE_COMPACTION_DRAIN_MAX_MS = 15 * 60_000;
+
+export type SessionEventQueueWaitOptions = {
+  timeoutMs?: number;
+  maxCompactionWaitMs?: number;
+  signal?: AbortSignal;
+  onTimeout?: (info: { waitedMs: number; compacting: boolean }) => void;
+};
+
+async function waitForQueueBounded(
+  queue: PromiseLike<unknown>,
+  deadlineMs: number,
+  signal: AbortSignal | undefined,
+): Promise<"settled" | "timeout" | "aborted"> {
+  if (signal?.aborted) {
+    return "aborted";
+  }
+  const remainingMs = Math.max(0, deadlineMs - Date.now());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(queue).then(
+        () => "settled" as const,
+        () => "settled" as const,
+      ),
+      new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), remainingMs);
+        timer.unref?.();
+      }),
+      ...(signal
+        ? [
+            new Promise<"aborted">((resolve) => {
+              onAbort = () => resolve("aborted");
+              signal.addEventListener("abort", onAbort, { once: true });
+            }),
+          ]
+        : []),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    if (onAbort) {
+      signal?.removeEventListener("abort", onAbort);
+    }
+  }
+}
+
+async function waitForSessionEventQueue(
+  session: unknown,
+  options?: SessionEventQueueWaitOptions,
+): Promise<void> {
   const owner = session as SessionEventQueueOwner;
-  for (let attempts = 0; attempts < 5; attempts += 1) {
+  const startedAt = Date.now();
+  const timeoutMs = Math.max(0, options?.timeoutMs ?? SESSION_EVENT_QUEUE_DRAIN_TIMEOUT_MS);
+  const hardDeadlineMs =
+    startedAt +
+    Math.max(timeoutMs, options?.maxCompactionWaitMs ?? SESSION_EVENT_QUEUE_COMPACTION_DRAIN_MAX_MS);
+  let deadlineMs = startedAt + timeoutMs;
+  for (let attempts = 0; attempts < 6; ) {
     const queue = owner?._agentEventQueue;
     if (!queue || typeof queue.then !== "function") {
       return;
     }
-    await Promise.resolve(queue).catch(() => {});
+    const outcome = await waitForQueueBounded(queue, deadlineMs, options?.signal);
+    if (outcome === "aborted") {
+      return;
+    }
+    if (outcome === "timeout") {
+      const compacting = isSessionCompacting(session);
+      if (compacting && Date.now() < hardDeadlineMs) {
+        // A live compaction is still making progress inside the queue; keep
+        // waiting in bounded slices so stop/abort can still interrupt us.
+        deadlineMs = Math.min(hardDeadlineMs, Date.now() + timeoutMs);
+        continue;
+      }
+      options?.onTimeout?.({ waitedMs: Date.now() - startedAt, compacting });
+      return;
+    }
     if (owner?._agentEventQueue === queue) {
       return;
     }
+    attempts += 1;
   }
-  const queue = owner?._agentEventQueue;
-  if (queue && typeof queue.then === "function") {
-    await Promise.resolve(queue).catch(() => {});
+}
+
+/**
+ * True while Pi is running compaction (auto, manual, or branch summary). The
+ * summarization request goes through `agent.streamFn`, but it is part of the
+ * current turn's bookkeeping rather than a new model turn: auto-compaction is
+ * started from inside the queued `agent_end` event, so draining that queue from
+ * the stream wrapper would wait on itself.
+ */
+function isSessionCompacting(session: unknown): boolean {
+  try {
+    return (session as { isCompacting?: unknown } | null)?.isCompacting === true;
+  } catch {
+    return false;
   }
+}
+
+function resolveStreamAbortSignal(args: unknown[]): AbortSignal | undefined {
+  const options = args[2] as { signal?: unknown } | null | undefined;
+  const signal = options?.signal;
+  return signal instanceof AbortSignal ? signal : undefined;
 }
 
 export class EmbeddedAttemptSessionTakeoverError extends Error {
@@ -239,15 +348,24 @@ export function installSessionExternalHookWriteLock(params: {
 
 export type EmbeddedAttemptSessionLockController = {
   releaseForPrompt(): Promise<void>;
-  waitForSessionEvents(session: unknown): Promise<void>;
+  waitForSessionEvents(session: unknown, options?: SessionEventQueueWaitOptions): Promise<void>;
   withSessionWriteLock<T>(run: () => Promise<T> | T): Promise<T>;
   acquireForCleanup(params?: { session?: unknown }): Promise<SessionLock>;
   hasSessionTakeover(): boolean;
+  /**
+   * Release the eagerly-held attempt lock if it is still held. Idempotent and
+   * safe after cleanup took ownership; used from the attempt's outer finally so
+   * an exception between prompt and cleanup cannot leak the session lock.
+   */
+  dispose(): Promise<void>;
 };
 
 export async function createEmbeddedAttemptSessionLockController(params: {
   acquireSessionWriteLock: AcquireSessionWriteLock;
   lockOptions: LockOptions;
+  /** Run abort signal; interrupts queued-event drains so stop never hangs. */
+  abortSignal?: AbortSignal;
+  onDrainTimeout?: (info: { waitedMs: number; compacting: boolean }) => void;
 }): Promise<EmbeddedAttemptSessionLockController> {
   const acquireLock = async (): Promise<SessionLock> =>
     await params.acquireSessionWriteLock({
@@ -260,6 +378,7 @@ export async function createEmbeddedAttemptSessionLockController(params: {
   let heldLock: SessionLock | undefined = await acquireLock();
   const activeWriteLock = new AsyncLocalStorage<SessionLock>();
   let fenceFingerprint: SessionFileFingerprint | undefined;
+  let fenceGeneration = 0;
   let fenceActive = false;
   let takeoverDetected = false;
 
@@ -282,15 +401,36 @@ export async function createEmbeddedAttemptSessionLockController(params: {
       return;
     }
     const current = await readSessionFileFingerprint(params.lockOptions.sessionFile);
-    if (!sameSessionFileFingerprint(fenceFingerprint, current)) {
-      takeoverDetected = true;
-      throw new EmbeddedAttemptSessionTakeoverError(params.lockOptions.sessionFile);
+    if (sameSessionFileFingerprint(fenceFingerprint, current)) {
+      return;
     }
+    // Tolerate writes this process made under the session lock after the
+    // fence was set (delivery mirrors, compaction notices). Only an unowned
+    // change is a real takeover.
+    const owned = getOwnedSessionFileWrite(params.lockOptions.sessionFile);
+    if (
+      owned &&
+      owned.generation > fenceGeneration &&
+      sameOwnedSessionFileFingerprint(owned.fingerprint, current)
+    ) {
+      fenceFingerprint = current;
+      fenceGeneration = owned.generation;
+      return;
+    }
+    takeoverDetected = true;
+    throw new EmbeddedAttemptSessionTakeoverError(params.lockOptions.sessionFile);
   }
 
   async function refreshSessionFileFence(): Promise<void> {
-    if (fenceActive && !takeoverDetected) {
-      fenceFingerprint = await readSessionFileFingerprint(params.lockOptions.sessionFile);
+    if (takeoverDetected) {
+      return;
+    }
+    const fingerprint = await readSessionFileFingerprint(params.lockOptions.sessionFile);
+    // Our own locked write: publish it so other in-process fences accept it.
+    const generation = recordOwnedSessionFileWrite(params.lockOptions.sessionFile, fingerprint);
+    if (fenceActive) {
+      fenceFingerprint = fingerprint;
+      fenceGeneration = generation;
     }
   }
 
@@ -303,11 +443,17 @@ export async function createEmbeddedAttemptSessionLockController(params: {
       }
       const lock = heldLock;
       heldLock = undefined;
+      fenceGeneration = currentOwnedSessionFileGeneration();
       fenceFingerprint = await readSessionFileFingerprint(params.lockOptions.sessionFile);
       fenceActive = true;
       await lock.release();
     },
-    waitForSessionEvents: waitForSessionEventQueue,
+    waitForSessionEvents: async (session, options) =>
+      await waitForSessionEventQueue(session, {
+        ...options,
+        signal: options?.signal ?? params.abortSignal,
+        onTimeout: options?.onTimeout ?? params.onDrainTimeout,
+      }),
     async withSessionWriteLock<T>(run: () => Promise<T> | T): Promise<T> {
       if (takeoverDetected) {
         throw new EmbeddedAttemptSessionTakeoverError(params.lockOptions.sessionFile);
@@ -335,7 +481,10 @@ export async function createEmbeddedAttemptSessionLockController(params: {
     },
     async acquireForCleanup(cleanupParams?: { session?: unknown }): Promise<SessionLock> {
       if (cleanupParams?.session) {
-        await waitForSessionEventQueue(cleanupParams.session);
+        await waitForSessionEventQueue(cleanupParams.session, {
+          signal: params.abortSignal,
+          onTimeout: params.onDrainTimeout,
+        });
       }
       if (takeoverDetected) {
         return noopLock;
@@ -365,13 +514,25 @@ export async function createEmbeddedAttemptSessionLockController(params: {
     hasSessionTakeover(): boolean {
       return takeoverDetected;
     },
+    async dispose(): Promise<void> {
+      if (!heldLock) {
+        return;
+      }
+      const lock = heldLock;
+      heldLock = undefined;
+      await lock.release();
+    },
   };
 }
 
 export function installPromptSubmissionLockRelease(params: {
   session: unknown;
-  waitForSessionEvents: (session: unknown) => Promise<void>;
+  waitForSessionEvents: (
+    session: unknown,
+    options?: SessionEventQueueWaitOptions,
+  ) => Promise<void>;
   releaseForPrompt: () => Promise<void>;
+  onDrainTimeout?: (info: { waitedMs: number; compacting: boolean }) => void;
 }): void {
   const agent = (params.session as SessionWithAgentPrompt).agent;
   if (typeof agent?.streamFn !== "function") {
@@ -383,7 +544,18 @@ export function installPromptSubmissionLockRelease(params: {
   }
   const originalStreamFn = currentStreamFn.bind(agent);
   const wrappedStreamFn: PromptReleaseStreamFn = async (...args: unknown[]) => {
-    await params.waitForSessionEvents(params.session);
+    if (isSessionCompacting(params.session)) {
+      // Compaction summaries reuse agent.streamFn. Auto-compaction runs inside
+      // the queued agent_end event (often under that event's write lock), so
+      // draining the queue here would wait on ourselves, and releasing the
+      // coarse lock would let the compaction entry land outside the fence.
+      // Keep whatever lock the caller holds and submit directly.
+      return await originalStreamFn(...args);
+    }
+    await params.waitForSessionEvents(params.session, {
+      signal: resolveStreamAbortSignal(args),
+      onTimeout: params.onDrainTimeout,
+    });
     await params.releaseForPrompt();
     return await originalStreamFn(...args);
   };
