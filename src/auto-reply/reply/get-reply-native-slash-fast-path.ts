@@ -1,3 +1,4 @@
+import { resolveAgentConfig } from "../../agents/agent-scope.js";
 import { loadModelCatalog } from "../../agents/model-catalog.js";
 import {
   resolveThinkingDefaultWithRuntimeCatalog,
@@ -50,9 +51,19 @@ function shouldRunNativeSlashCommandFastPath(ctx: MsgContext): boolean {
 
 async function resolveNativeSlashDefaultThinkingLevel(params: {
   cfg: OpenClawConfig;
+  agentId: string;
+  agentCfg: AgentDefaults;
   provider: string;
   model: string;
 }): Promise<ThinkLevel> {
+  // Explicit agent/default settings take precedence and need no model catalog.
+  const configuredThinkingLevel =
+    normalizeThinkLevel(resolveAgentConfig(params.cfg, params.agentId)?.thinkingDefault) ??
+    normalizeThinkLevel(params.cfg.agents?.defaults?.thinkingDefault) ??
+    normalizeThinkLevel(params.agentCfg?.thinkingDefault);
+  if (configuredThinkingLevel !== undefined) {
+    return configuredThinkingLevel;
+  }
   return resolveThinkingDefaultWithRuntimeCatalog({
     cfg: params.cfg,
     provider: params.provider,
@@ -100,19 +111,23 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     triggerBodyNormalized: sessionState.triggerBodyNormalized,
     commandAuthorized: params.commandAuthorized,
   });
+  const targetSessionEntry =
+    sessionState.sessionStore[sessionState.sessionKey] ?? sessionState.sessionEntry;
+  const resolvedThinkLevel =
+    normalizeThinkLevel(params.opts?.thinkingLevelOverride) ??
+    normalizeThinkLevel(targetSessionEntry?.thinkingLevel);
+  let resolvedDefaultThinkingLevel: ThinkLevel | undefined;
+  const resolveDefaultThinkingLevel = async () => {
+    resolvedDefaultThinkingLevel ??= await resolveNativeSlashDefaultThinkingLevel({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      agentCfg: params.agentCfg,
+      provider: params.provider,
+      model: params.model,
+    });
+    return resolvedDefaultThinkingLevel;
+  };
   if (command.commandBodyNormalized === "/status") {
-    const targetSessionEntry =
-      sessionState.sessionStore[sessionState.sessionKey] ?? sessionState.sessionEntry;
-    let resolvedDefaultThinkingLevel: ThinkLevel | undefined;
-    const resolveDefaultThinkingLevel = async () => {
-      resolvedDefaultThinkingLevel ??= await resolveNativeSlashDefaultThinkingLevel({
-        cfg: params.cfg,
-        provider: params.provider,
-        model: params.model,
-      });
-      return resolvedDefaultThinkingLevel;
-    };
-    const resolvedThinkLevel = normalizeThinkLevel(targetSessionEntry?.thinkingLevel);
     const { buildStatusReply } = await loadStatusCommandRuntime();
     return {
       handled: true,
@@ -163,13 +178,13 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     workspaceDir: params.workspaceDir,
     opts: params.opts,
     defaultGroupActivation: () => "always",
-    resolvedThinkLevel: undefined,
+    resolvedThinkLevel,
     resolvedVerboseLevel: "off",
     resolvedReasoningLevel: "off",
     resolvedElevatedLevel: "off",
     blockReplyChunking: undefined,
     resolvedBlockStreamingBreak: "text_end",
-    resolveDefaultThinkingLevel: async () => undefined,
+    resolveDefaultThinkingLevel,
     provider: params.provider,
     model: params.model,
     contextTokens: params.agentCfg?.contextTokens ?? 0,
