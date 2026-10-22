@@ -1,0 +1,48 @@
+name: Patch Claw language runtimes
+on:
+  push:
+    branches: [security/runtime-20261022]
+    paths:
+      - 'tools/runtime-security/**'
+      - '.github/workflows/build-runtime-security.yml'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  packages: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: main
+            base: ghcr.io/senorsen/openclaw-fork@sha256:6dcc98cf10f0993ae085d995942a2781b9a68a8fcc345d3827ce5eac95c21ef5
+            tag: 2026.5.18-custom.1777e2-runtime-20261022
+          - name: nana
+            base: ghcr.io/senorsen/openclaw-fork@sha256:436fef512f9afa8014f2ea4fbb4a123d465f942be4a4ceed194f26f1102330f1
+            tag: 2026.7.1-2-ssh-runtime-20261022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build patch without changing application files
+        run: |
+          docker build --pull --no-cache \
+            --build-arg BASE_IMAGE=${{ matrix.base }} \
+            -t ghcr.io/senorsen/openclaw-fork:${{ matrix.tag }} \
+            tools/runtime-security
+      - name: Verify runtime and unchanged application
+        run: |
+          image=ghcr.io/senorsen/openclaw-fork:${{ matrix.tag }}
+          docker run --rm --entrypoint node "$image" /opt/runtime-security-20261022/verify.mjs
+          docker run --rm --entrypoint node "$image" /app/dist/index.js --version
+          docker run --rm --entrypoint sh '${{ matrix.base }}' -c 'find /app/dist -type f -print0 | sort -z | xargs -0 sha256sum' > before.sha256
+          docker run --rm --entrypoint sh "$image" -c 'find /app/dist -type f -print0 | sort -z | xargs -0 sha256sum' > after.sha256
+          diff -u before.sha256 after.sha256
+          docker run --rm --entrypoint sh "$image" -c 'dpkg-query -W ca-certificates python3.11 libssl3; node -v; npm -v'
+      - name: Push verified image
+        run: docker push ghcr.io/senorsen/openclaw-fork:${{ matrix.tag }}
