@@ -6,7 +6,7 @@ inputs:
   node-version:
     description: Node.js version to install.
     required: false
-    default: "24.x"
+    default: "24.22.1"
   cache-key-suffix:
     description: Suffix appended to the pnpm store cache key.
     required: false

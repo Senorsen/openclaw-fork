@@ -385,7 +385,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24.x"
+          node-version: "24.22.1"
           check-latest: false
 
       - name: Audit production dependencies
@@ -923,7 +923,7 @@ jobs:
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env
         with:
-          node-version: "22.19.0"
+          node-version: "22.23.4"
           cache-key-suffix: "node22-pnpm11"
           install-bun: "false"
 
@@ -1003,7 +1003,7 @@ jobs:
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env
         with:
-          node-version: "${{ matrix.node_version || '24.x' }}"
+          node-version: "${{ matrix.node_version || '24.22.1' }}"
           cache-key-suffix: "${{ matrix.cache_key_suffix || 'node24-pnpm11' }}"
           install-bun: "false"
 
@@ -1511,7 +1511,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 24.x
+          node-version: "24.22.1"
           check-latest: false
 
       - name: Setup pnpm + cache store
