@@ -42,6 +42,14 @@ describe("classifyCompactionReason", () => {
     ).toBe("guard_blocked");
   });
 
+  it("distinguishes refusals, cancellation, and summarization errors", () => {
+    expect(classifyCompactionReason("Summarization failed: Anthropic response stopped: stop_reason=refusal")).toBe("provider_refusal");
+    expect(classifyCompactionReason("Summarization failed: Anthropic response stopped: stop_reason=sensitive")).toBe("provider_refusal");
+    expect(classifyCompactionReason("This operation was aborted")).toBe("cancelled");
+    expect(classifyCompactionReason("Compaction cancelled by caller")).toBe("cancelled");
+    expect(classifyCompactionReason("Summarization failed: An unknown error occurred")).toBe("summary_failed");
+  });
+
   it("keeps unclassified provider errors in the stable unknown bucket", () => {
     expect(classifyCompactionReason("No API provider registered for api: ollama")).toBe("unknown");
   });

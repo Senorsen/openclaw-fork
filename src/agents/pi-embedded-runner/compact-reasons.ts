@@ -38,7 +38,13 @@ export function classifyCompactionReason(reason?: string): string {
   if (text.includes("guard")) {
     return "guard_blocked";
   }
-  if (text.includes("summary")) {
+  if (text.includes("stop_reason=refusal") || text.includes("stop_reason=sensitive")) {
+    return "provider_refusal";
+  }
+  if (text.includes("aborted") || text.includes("cancelled by caller")) {
+    return "cancelled";
+  }
+  if (text.includes("summary") || text.includes("summarization")) {
     return "summary_failed";
   }
   if (text.includes("timed out") || text.includes("timeout")) {

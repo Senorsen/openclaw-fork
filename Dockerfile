@@ -179,6 +179,11 @@ COPY --from=runtime-assets --chown=node:node /app/${OPENCLAW_BUNDLED_PLUGIN_DIR}
 COPY --from=runtime-assets --chown=node:node /app/skills ./skills
 COPY --from=runtime-assets --chown=node:node /app/docs ./docs
 COPY --from=runtime-assets --chown=node:node /app/qa ./qa
+# Preserve refusal diagnostics and reject cancelled/empty compaction summaries.
+# Cancellation/fallback changes are compiled from src/; dependency changes are
+# applied after dependency pruning so the final runtime always contains them.
+COPY --chown=node:node tools/compaction-fix /opt/compaction-fix-20261030
+RUN node /opt/compaction-fix-20261030/patch.mjs /app
 
 # Keep pnpm available in the runtime image for container-local workflows.
 # Use a shared Corepack home so the non-root `node` user does not need a

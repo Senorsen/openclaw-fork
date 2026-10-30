@@ -394,6 +394,60 @@ describe("compactEmbeddedPiSessionDirect hooks", () => {
     }
   });
 
+  it("does not load a session when compaction was already cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await compactEmbeddedPiSessionDirect({
+      ...wrappedCompactionArgs(),
+      abortSignal: controller.signal,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("Compaction cancelled by caller");
+    expect(resolveModelMock).not.toHaveBeenCalled();
+    expect(sessionCompactImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, new Error("request timed out")])(
+    "does not traverse fallback models after caller cancellation (%s)",
+    async (abortReason) => {
+      const controller = new AbortController();
+      sessionCompactImpl.mockImplementationOnce(async () => {
+        controller.abort(abortReason);
+        throw controller.signal.reason;
+      });
+      const result = await compactEmbeddedPiSessionDirect({
+        ...wrappedCompactionArgs(),
+        provider: "openai",
+        model: "gpt-primary",
+        abortSignal: controller.signal,
+        modelFallbacksOverride: ["anthropic/claude-fallback"],
+        config: { agents: { defaults: { model: {
+          primary: "openai/gpt-primary", fallbacks: ["anthropic/claude-fallback"],
+        } } } } as never,
+      });
+      expect(result.ok).toBe(false);
+      expect(sessionCompactImpl, result.reason).toHaveBeenCalledTimes(1);
+      expect(resolveModelMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not route an explicit provider refusal to fallback models", async () => {
+    sessionCompactImpl.mockRejectedValueOnce(
+      new Error("Summarization failed: Anthropic response stopped: stop_reason=refusal"),
+    );
+    const result = await compactEmbeddedPiSessionDirect({
+      ...wrappedCompactionArgs(), provider: "openai", model: "gpt-primary",
+      modelFallbacksOverride: ["anthropic/claude-fallback"],
+      config: { agents: { defaults: { model: {
+        primary: "openai/gpt-primary", fallbacks: ["anthropic/claude-fallback"],
+      } } } } as never,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("stop_reason=refusal");
+    expect(sessionCompactImpl, result.reason).toHaveBeenCalledTimes(1);
+    expect(resolveModelMock).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps compaction fallback selection ephemeral", async () => {
     resolveModelMock.mockImplementation((provider = "openai", modelId = "fake") => ({
       model: { provider, api: "responses", id: modelId, input: [] },

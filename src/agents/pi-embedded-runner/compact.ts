@@ -412,6 +412,11 @@ function fallbackFailureToCompactionResult(err: unknown): EmbeddedPiCompactResul
 export async function compactEmbeddedPiSessionDirect(
   params: CompactEmbeddedPiSessionParams,
 ): Promise<EmbeddedPiCompactResult> {
+  // Caller cancellation is terminal, not a provider timeout. Do not reload the
+  // transcript or allocate another session for every fallback candidate.
+  if (params.abortSignal?.aborted) {
+    return { ok: false, compacted: false, reason: "Compaction cancelled by caller" };
+  }
   if (hasExplicitCompactionModel(params) || !hasCompactionModelFallbackCandidates(params)) {
     return await compactEmbeddedPiSessionDirectOnce(params);
   }
@@ -453,8 +458,13 @@ export async function compactEmbeddedPiSessionDirect(
       },
       fallbacksOverride,
       classifyResult: ({ result, provider, model }) =>
-        classifyCompactionFallbackResult(result, provider, model),
+        params.abortSignal?.aborted
+          ? null
+          : classifyCompactionFallbackResult(result, provider, model),
       run: async (provider, model) => {
+        if (params.abortSignal?.aborted) {
+          return { ok: false, compacted: false, reason: "Compaction cancelled by caller" };
+        }
         const authProfileId = provider === primaryProvider ? params.authProfileId : undefined;
         return await compactEmbeddedPiSessionDirectOnce({
           ...params,

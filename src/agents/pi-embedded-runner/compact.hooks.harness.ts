@@ -323,6 +323,10 @@ export async function loadCompactHooksHarness(): Promise<{
     getGlobalHookRunner: () => hookRunner,
   }));
 
+  vi.doMock("../harness/runtime-plugin.js", () => ({
+    ensureSelectedAgentHarnessPlugin: vi.fn(async () => {}),
+  }));
+
   vi.doMock("../runtime-plugins.js", () => ({
     ensureRuntimePluginsLoaded,
   }));
