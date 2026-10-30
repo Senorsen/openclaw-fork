@@ -59,4 +59,53 @@ if (process.argv.includes('--runtime-overlay')) {
     '\tif (text.includes("stop_reason=refusal") || text.includes("stop_reason=sensitive")) return "provider_refusal";\n\tif (text.includes("aborted") || text.includes("cancelled by caller")) return "cancelled";\n\tif (text.includes("summary") || text.includes("summarization")) return "summary_failed";');
   console.log(`Patched compaction bundle: ${path.basename(file)}`);
 }
+
+// Backport openclaw/openclaw@b00e1b2e: actionable memory-pressure logs.
+if (process.argv.includes('--runtime-overlay')) {
+  const files = fs.readdirSync(path.join(root, 'dist')).filter(f => /^diagnostic-.*\.js$/.test(f)).map(f => path.join(root, 'dist', f)).filter(f => fs.readFileSync(f, 'utf8').includes('function logMemoryPressure(params) {'));
+  if (files.length !== 1) throw new Error(`Expected one diagnostic runtime, got ${files.length}`);
+  const file = files[0];
+  replaceOnce(file,
+    '\tif (pressure.level === "critical") log.warn(message);\n\telse log.info(message);\n}',
+    '\tlog.warn(message);\n}');
+  replaceOnce(file,
+    'const message = `memory pressure: level=${pressure.level} reason=${pressure.reason} rssBytes=',
+    'const message = `memory pressure: level=${pressure.level} reason=${pressure.reason} ${formatPressureSummary(pressure)} rssBytes=');
+  replaceOnce(file,
+    ' memoryPressureSnapshot=${params.writeCriticalBundle ? "enabled" : "disabled"}` : "");',
+    ' memoryPressureSnapshot=${params.writeCriticalBundle ? "enabled" : "disabled"}` : "") + ` ${formatPressureNextStep(pressure)}`;');
+  replaceOnce(file, 'function logMemoryPressure(params) {', `const BYTE_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
+function formatScaledNumber(value) {
+\tconst fixed = value >= 10 ? value.toFixed(1) : value.toFixed(2);
+\treturn fixed.replace(/\\.0+$/u, "").replace(/(\\.\\d*[1-9])0$/u, "$1");
+}
+function formatReadableBytes(value) {
+\tif (typeof value !== "number" || !Number.isFinite(value) || value < 0) return void 0;
+\tlet scaled = value;
+\tlet unitIndex = 0;
+\twhile (scaled >= 1024 && unitIndex < BYTE_UNITS.length - 1) { scaled /= 1024; unitIndex++; }
+\treturn unitIndex === 0 ? \`\${Math.round(scaled)} \${BYTE_UNITS[unitIndex]}\` : \`\${formatScaledNumber(scaled)} \${BYTE_UNITS[unitIndex]}\`;
+}
+function formatPressureRatio(params) {
+\tconst { pressure, thresholdBytes } = params;
+\tif (!Number.isFinite(thresholdBytes) || thresholdBytes <= 0) return void 0;
+\tconst value = pressure.reason === "heap_threshold" ? pressure.memory.heapUsedBytes : pressure.reason === "rss_growth" ? pressure.rssGrowthBytes : pressure.memory.rssBytes;
+\tif (typeof value !== "number" || !Number.isFinite(value)) return void 0;
+\treturn \`\${formatScaledNumber(value / thresholdBytes * 100)}%\`;
+}
+function formatPressureSummary(pressure) {
+\treturn [
+\t\t\`rss=\${formatReadableBytes(pressure.memory.rssBytes)}\`,
+\t\t\`heap=\${formatReadableBytes(pressure.memory.heapUsedBytes)}\`,
+\t\tpressure.thresholdBytes !== void 0 ? \`threshold=\${formatReadableBytes(pressure.thresholdBytes)}\` : "",
+\t\tpressure.thresholdBytes !== void 0 ? \`thresholdRatio=\${formatPressureRatio({ pressure, thresholdBytes: pressure.thresholdBytes })}\` : "",
+\t\tpressure.rssGrowthBytes !== void 0 ? \`rssGrowth=\${formatReadableBytes(pressure.rssGrowthBytes)}\` : ""
+\t].filter(Boolean).join(" ");
+}
+function formatPressureNextStep(pressure) {
+\treturn pressure.level === "critical" ? "nextStep=inspect latest stability bundle or run openclaw gateway diagnostics export; restart gateway if process is unstable" : "nextStep=run openclaw gateway status --deep and openclaw gateway diagnostics export; restart gateway if pressure persists";
+}
+function logMemoryPressure(params) {`);
+  console.log(`Patched memory pressure log: ${path.basename(file)}`);
+}
 console.log('Patched PI refusal diagnostics and cancelled/empty-summary rejection.');

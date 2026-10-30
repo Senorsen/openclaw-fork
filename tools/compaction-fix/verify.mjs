@@ -54,4 +54,12 @@ assert.equal(candidates.length, 1);
 const { compactEmbeddedPiSessionDirect } = await import(pathToFileURL(candidates[0]));
 const result = await compactEmbeddedPiSessionDirect({ sessionId: 'test', sessionFile: '/DO-NOT-CREATE-TEST-SESSION.jsonl', workspaceDir: '/DO-NOT-CREATE-TEST-WORKSPACE', provider: 'nonexistent', model: 'none', abortSignal: AbortSignal.abort() });
 assert.deepEqual(result, { ok: false, compacted: false, reason: 'Compaction cancelled by caller' });
+{
+  const dfiles = fs.readdirSync(path.join(root, 'dist')).filter(f => /^diagnostic-.*\.js$/.test(f)).map(f => path.join(root, 'dist', f)).filter(f => fs.readFileSync(f, 'utf8').includes('function formatPressureSummary(pressure)'));
+  assert.equal(dfiles.length, 1, 'memory-pressure log backport present');
+  const src = fs.readFileSync(dfiles[0], 'utf8');
+  assert.ok(src.includes('nextStep=run openclaw gateway status --deep'));
+  assert.ok(!src.includes('else log.info(message);'));
+}
+console.log('PASS: memory-pressure log backport present.');
 console.log('PASS: real SSE refusal/sensitive diagnostics, no refusal retry, aborted/empty history and prefix summary rejected, normal summary preserved, real entrypoint pre-cancellation is cheap.');
