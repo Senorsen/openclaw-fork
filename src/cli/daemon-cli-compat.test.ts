@@ -82,4 +82,17 @@ describe("resolveLegacyDaemonCliAccessors", () => {
       runDaemonUninstall: "i",
     });
   });
+
+  it("resolves runtime chunks that re-export runners from another chunk", () => {
+    const lifecycleRuntimeBundle = `
+      export { t as runDaemonRestart, n as runDaemonStart, r as runDaemonStop, i as runDaemonUninstall } from "./lifecycle-BtjINPT2.js";
+    `;
+
+    expect(resolveLegacyDaemonCliRunnerAccessors(lifecycleRuntimeBundle)).toEqual({
+      runDaemonRestart: "runDaemonRestart",
+      runDaemonStart: "runDaemonStart",
+      runDaemonStop: "runDaemonStop",
+      runDaemonUninstall: "runDaemonUninstall",
+    });
+  });
 });

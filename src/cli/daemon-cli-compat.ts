@@ -22,7 +22,9 @@ const REGISTER_CONTAINER_RE =
   /(?:var|const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\/\*[\s\S]*?\*\/\s*)?__exportAll\(\{\s*registerDaemonCli\s*:\s*\(\)\s*=>\s*registerDaemonCli\s*\}\)/;
 
 function parseExportAliases(bundleSource: string): Map<string, string> | null {
-  const matches = [...bundleSource.matchAll(/export\s*\{([^}]+)\}\s*;?/g)];
+  const matches = [
+    ...bundleSource.matchAll(/export\s*\{([^}]+)\}\s*(from\s*["'][^"']+["'])?\s*;?/g),
+  ];
   if (matches.length === 0) {
     return null;
   }
@@ -31,6 +33,9 @@ function parseExportAliases(bundleSource: string): Map<string, string> | null {
   if (!body) {
     return null;
   }
+  // Re-export chunks (`export { t as runDaemonRestart } from "./x.js"`) already expose the
+  // public name; the local side is the upstream chunk's minified alias, not a source name.
+  const isReExport = Boolean(last?.[2]);
 
   const aliases = new Map<string, string>();
   for (const chunk of body.split(",")) {
@@ -44,7 +49,7 @@ function parseExportAliases(bundleSource: string): Map<string, string> | null {
     }
     const original = parsed[1];
     const alias = parsed[2] ?? original;
-    aliases.set(original, alias);
+    aliases.set(isReExport ? alias : original, alias);
   }
   return aliases;
 }
